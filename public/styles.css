@@ -29,7 +29,18 @@ body { margin: 0; min-width: 320px; }
 .eyebrow { color: #90a8ff; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.14em; }
 h1 { margin: 14px 0 10px; font-size: clamp(2rem, 8vw, 3.5rem); line-height: 1; }
 p { color: #b8c1d6; font-size: 1.05rem; }
-.status { display: inline-flex; align-items: center; gap: 10px; margin-top: 24px; color: #d9e2f5; }
-.status-dot { width: 10px; height: 10px; border-radius: 50%; background: #52d69a; box-shadow: 0 0 16px #52d69a; }
+.intro { margin-bottom: 32px; line-height: 1.6; }
+form { display: grid; gap: 22px; }
+.field { display: grid; gap: 9px; }
+label { color: #e6ebf7; font-size: 0.92rem; font-weight: 650; }
+input { width: 100%; border: 1px solid #46557a; border-radius: 10px; padding: 14px 15px; background: #111827; color: #f4f7fb; font: inherit; font-size: 1rem; outline: none; transition: border-color 160ms, box-shadow 160ms; }
+input::placeholder { color: #71809e; }
+input:focus { border-color: #90a8ff; box-shadow: 0 0 0 3px rgba(144, 168, 255, 0.18); }
+.hint { color: #8996b0; font-size: 0.78rem; line-height: 1.4; }
+button { margin-top: 4px; border: 0; border-radius: 10px; padding: 14px 18px; background: #8da7ff; color: #111827; cursor: pointer; font: inherit; font-weight: 750; transition: background 160ms, transform 160ms; }
+button:hover { background: #adc0ff; }
+button:active { transform: translateY(1px); }
+.form-error { margin: 0; color: #ff9b9b; font-size: 0.88rem; }
+.form-status { margin: 20px 0 0; color: #7ee2b1; font-size: 0.9rem; }
 
 @media (max-width: 480px) { .card { padding: 32px 24px; } }

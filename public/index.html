@@ -10,13 +10,44 @@
   <body>
     <main class="shell">
       <section class="card" aria-labelledby="title">
-        <span class="eyebrow">CLOUDFLARE WORKERS</span>
-        <h1 id="title">ProPresenter Remote</h1>
-        <p>정적 웹앱 호스팅이 준비되었습니다.</p>
-        <div class="status" role="status">
-          <span class="status-dot" aria-hidden="true"></span>
-          <span>호스팅 연결됨</span>
-        </div>
+        <span class="eyebrow">PROPRESENTER REMOTE</span>
+        <h1 id="title">연결 설정</h1>
+        <p class="intro">조작할 ProPresenter가 설치된 PC의 네트워크 정보를 입력하세요.</p>
+
+        <form id="connection-form" novalidate>
+          <div class="field">
+            <label for="host">PC IP 주소</label>
+            <input
+              id="host"
+              name="host"
+              type="text"
+              inputmode="decimal"
+              placeholder="예: 192.168.0.10"
+              autocomplete="off"
+              required
+            />
+            <span class="hint">같은 네트워크에 있는 ProPresenter PC의 IPv4 주소</span>
+          </div>
+
+          <div class="field">
+            <label for="port">포트 번호</label>
+            <input
+              id="port"
+              name="port"
+              type="number"
+              inputmode="numeric"
+              placeholder="예: 1025"
+              min="1"
+              max="65535"
+              required
+            />
+          </div>
+
+          <p id="form-error" class="form-error" role="alert" hidden></p>
+          <button type="submit">ProPresenter 연결</button>
+        </form>
+
+        <p id="form-status" class="form-status" role="status" hidden></p>
       </section>
     </main>
     <script src="/app.js" type="module"></script>
