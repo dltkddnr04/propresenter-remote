@@ -10,11 +10,9 @@ const connectionLabel = document.querySelector('#connection-label');
 const playlistList = document.querySelector('#playlist-list');
 const slideGrid = document.querySelector('#slide-grid');
 const workspaceTitle = document.querySelector('#workspace-title');
-const playlists = [
-  { name: '주일예배', slides: ['예배에의 부름', '찬양합니다', '대표기도', '설교 말씀', '축도'] },
-  { name: '수요예배', slides: ['수요예배 시작', '찬송가 310장', '성경봉독', '말씀과 은혜'] },
-  { name: '광고 및 안내', slides: ['이번 주 소식', '다음 행사 안내', '헌금 안내'] }
-];
+const apiError = document.querySelector('#api-error');
+let apiBase = '';
+let playlists = [];
 
 const savedSettings = JSON.parse(localStorage.getItem(settingsKey) || 'null');
 if (savedSettings) {
@@ -45,9 +43,35 @@ form.addEventListener('submit', (event) => {
     return;
   }
 
-  localStorage.setItem(settingsKey, JSON.stringify({ host, port }));
-  showControlView({ host, port });
+  const settings = { host, port };
+  localStorage.setItem(settingsKey, JSON.stringify(settings));
+  connect(settings);
 });
+
+async function connect(settings) {
+  apiBase = `http://${settings.host}:${settings.port}`;
+  try {
+    const response = await apiFetch('/v1/playlists');
+    playlists = normalizePlaylists(response);
+    if (!playlists.length) throw new Error('재생목록이 없습니다.');
+    showControlView(settings);
+  } catch (requestError) {
+    error.textContent = `ProPresenter에 연결할 수 없습니다: ${requestError.message}`;
+    error.hidden = false;
+  }
+}
+
+async function apiFetch(path) {
+  const response = await fetch(`${apiBase}${path}`, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.status === 204 ? null : response.json();
+}
+
+function normalizePlaylists(response) {
+  const data = response?.data ?? response;
+  const entries = Array.isArray(data) ? data : (data?.playlists || data?.children || []);
+  return entries.filter((item) => item && item.id).map((item) => ({ id: item.id, name: item.name || item.title || '이름 없는 재생목록' }));
+}
 
 function showControlView(settings) {
   setupView.hidden = true;
@@ -56,7 +80,7 @@ function showControlView(settings) {
   renderPlaylists(0);
 }
 
-function renderPlaylists(activeIndex) {
+async function renderPlaylists(activeIndex) {
   playlistList.replaceChildren(...playlists.map((playlist, index) => {
     const item = document.createElement('button');
     item.className = `playlist-item${index === activeIndex ? ' active' : ''}`;
@@ -67,14 +91,33 @@ function renderPlaylists(activeIndex) {
   }));
   const playlist = playlists[activeIndex];
   workspaceTitle.textContent = playlist.name;
-  slideGrid.replaceChildren(...playlist.slides.map((slide, index) => {
+  slideGrid.innerHTML = '<p class="loading">슬라이드를 불러오는 중…</p>';
+  try {
+    const response = await apiFetch(`/v1/playlist/${encodeURIComponent(playlist.id)}`);
+    const slides = normalizeSlides(response);
+    slideGrid.replaceChildren(...slides.map((slide, index) => {
     const card = document.createElement('button');
     card.className = 'slide-card';
     card.type = 'button';
-    card.innerHTML = `<span class="slide-preview">${slide}</span><span class="slide-meta"><span>${slide}</span><span>${index + 1}</span></span>`;
+    card.innerHTML = `<span class="slide-preview">${escapeHtml(slide.name)}</span><span class="slide-meta"><span>${escapeHtml(slide.name)}</span><span>${index + 1}</span></span>`;
+    card.addEventListener('click', async () => {
+      try { await apiFetch(`/v1/playlist/${encodeURIComponent(playlist.id)}/${index}/trigger`); } catch (requestError) { showError(`슬라이드 실행 실패: ${requestError.message}`); }
+    });
     return card;
-  }));
+    }));
+  } catch (requestError) {
+    showError(`슬라이드를 불러올 수 없습니다: ${requestError.message}`);
+  }
 }
+
+function normalizeSlides(response) {
+  const data = response?.data ?? response;
+  const entries = Array.isArray(data) ? data : (data?.items || data?.children || data?.playlist || []);
+  return entries.map((item) => ({ name: item.name || item.title || item.presentation?.name || '슬라이드' }));
+}
+
+function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character])); }
+function showError(message) { apiError.textContent = message; apiError.hidden = false; }
 
 document.querySelector('#settings-button').addEventListener('click', () => {
   controlView.hidden = true;
