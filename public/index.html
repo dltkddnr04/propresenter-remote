@@ -51,6 +51,17 @@
         <p id="form-status" class="form-status" role="status" hidden></p>
       </section>
     </main>
+    <main class="control-app" id="control-view" hidden>
+      <aside class="sidebar">
+        <div class="sidebar-header"><div><span class="eyebrow">PROPRESENTER REMOTE</span><h2>재생목록</h2></div><button class="icon-button" id="settings-button" type="button" aria-label="연결 설정">⚙</button></div>
+        <div class="connection-pill"><span class="status-dot" aria-hidden="true"></span><span id="connection-label"></span></div>
+        <nav id="playlist-list" class="playlist-list" aria-label="재생목록 목록"></nav>
+      </aside>
+      <section class="workspace" aria-labelledby="workspace-title">
+        <header class="workspace-header"><div><span class="eyebrow">PLAYLIST</span><h1 id="workspace-title"></h1></div><span class="live-badge">연결됨</span></header>
+        <div id="slide-grid" class="slide-grid"></div>
+      </section>
+    </main>
     <script src="/app.js" type="module"></script>
   </body>
 </html>
