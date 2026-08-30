@@ -14,7 +14,8 @@ Cloudflare Workers의 정적 자산으로 배포하는 간단한 ProPresenter �
 
 ## 예상 구성
 
-- 정적 프론트엔드: `public/` 디렉터리의 HTML, CSS, JavaScript
+- 정적 프론트엔드: React + Vite
+- 서버 상태 관리: TanStack Query
 - 호스팅: Cloudflare Workers Static Assets
 - 제어 대상: ProPresenter Remote API
 
@@ -27,7 +28,7 @@ npm install
 npm run dev
 ```
 
-기본 정적 자산은 `public/`에 추가합니다. `wrangler.toml`은 `/public`을 자산 디렉터리로 사용하고, 클라이언트 라우팅을 위해 SPA 폴백을 활성화합니다.
+개발 서버는 Vite로 실행하며, 프로덕션 번들은 `dist/`에 생성됩니다. `wrangler.toml`은 이 `dist/`를 정적 자산 디렉터리로 사용하고 SPA 폴백을 활성화합니다.
 
 ## 배포
 
@@ -37,6 +38,8 @@ Cloudflare에 로그인한 뒤 다음 명령으로 배포합니다.
 npx wrangler login
 npm run deploy
 ```
+
+`npm run deploy`가 먼저 Vite 빌드를 실행한 뒤 `dist/`를 Cloudflare Workers 정적 자산으로 배포합니다.
 
 ## 주의사항
 
