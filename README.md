@@ -10,21 +10,33 @@ Cloudflare Workers의 정적 자산으로 배포하는 간단한 ProPresenter �
 
 ## 현재 상태
 
-이 저장소는 초기 문서화 단계입니다. 앱 구현과 배포 설정은 이후 추가할 예정입니다.
+현재 Cloudflare Workers 정적 자산으로 서빙할 수 있는 최소 웹앱 골격이 구성되어 있습니다. ProPresenter 원격 제어 화면과 API 연동은 이후 추가할 예정입니다.
 
 ## 예상 구성
 
-- 정적 프론트엔드: HTML, CSS, JavaScript 또는 선택한 프론트엔드 도구
+- 정적 프론트엔드: `public/` 디렉터리의 HTML, CSS, JavaScript
 - 호스팅: Cloudflare Workers Static Assets
 - 제어 대상: ProPresenter Remote API
 
 ## 개발
 
-앱 구현이 추가되면 이 문서에 로컬 개발, 환경 변수, ProPresenter 연결 설정을 업데이트합니다.
+Node.js와 Wrangler가 필요합니다.
+
+```bash
+npm install
+npm run dev
+```
+
+기본 정적 자산은 `public/`에 추가합니다. `wrangler.toml`은 `/public`을 자산 디렉터리로 사용하고, 클라이언트 라우팅을 위해 SPA 폴백을 활성화합니다.
 
 ## 배포
 
-Cloudflare Workers 배포 설정이 추가되면 Wrangler 기반 배포 명령과 필요한 설정을 이 문서에 기록합니다.
+Cloudflare에 로그인한 뒤 다음 명령으로 배포합니다.
+
+```bash
+npx wrangler login
+npm run deploy
+```
 
 ## 주의사항
 
