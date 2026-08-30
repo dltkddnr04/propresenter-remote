@@ -10,7 +10,7 @@ Cloudflare Workers의 정적 자산으로 배포하는 간단한 ProPresenter �
 
 ## 현재 상태
 
-ProPresenter의 재생목록과 프레젠테이션을 조회하고, 슬라이드를 원격으로 실행할 수 있는 React SPA입니다. Cloudflare Workers의 정적 자산으로 배포할 수 있도록 Vite production build 결과물인 `dist/`를 사용합니다.
+ProPresenter의 라이브러리·재생목록과 프레젠테이션을 조회하고, 슬라이드를 원격으로 실행할 수 있는 React SPA입니다. Cloudflare Workers의 정적 자산으로 배포할 수 있도록 Vite production build 결과물인 `dist/`를 사용합니다.
 
 ## 기술 구성
 
@@ -22,7 +22,8 @@ ProPresenter의 재생목록과 프레젠테이션을 조회하고, 슬라이드
 주요 화면과 기능:
 
 - 연결 정보 입력: ProPresenter PC의 IPv4 주소와 포트 번호 입력. 포트 기본값은 `1025`입니다.
-- 조작 화면: 재생목록, 헤더, 프레젠테이션, 슬라이드 표시 및 실행
+- 조작 화면: 라이브러리, 재생목록, 프레젠테이션, 슬라이드 표시 및 실행
+- 라이브러리 탐색: 라이브러리 전체와 개별 라이브러리를 각각 접고 펼칠 수 있으며, 프레젠테이션을 선택해 슬라이드를 확인할 수 있습니다.
 - 현재 상태: 현재 활성 재생목록과 슬라이드를 자동 선택·강조
 - 슬라이드 표시: 미리보기 또는 텍스트 모드 선택
 - 미리보기 해상도: `64`, `128`, `256`, `512` 선택
@@ -73,9 +74,12 @@ npm run deploy
 
 - `GET /v1/playlists?chunked=false`: 재생목록 조회
 - `GET /v1/playlist/{playlist_uuid}?chunked=false`: 재생목록 항목 조회
+- `GET /v1/libraries?chunked=false`: 라이브러리 조회
+- `GET /v1/library/{library_uuid}?chunked=false`: 라이브러리의 프레젠테이션 조회
 - `GET /v1/presentation/{presentation_uuid}?chunked=false`: 그룹과 슬라이드 조회
 - `GET /v1/presentation/{presentation_uuid}/thumbnail/{index}?quality={quality}`: 슬라이드 썸네일 조회
 - `GET /v1/presentation/{presentation_uuid}/{index}/trigger`: 슬라이드 실행
+- `GET /v1/library/{library_uuid}/{presentation_uuid}/{index}/trigger`: 라이브러리 프레젠테이션의 슬라이드 실행
 - `GET /v1/playlist/active?chunked=false`: 현재 활성 재생목록 조회
 - `GET /v1/presentation/active?chunked=false`: 현재 활성 프레젠테이션 조회
 - `GET /v1/presentation/slide_index?chunked=false`: 현재 슬라이드 인덱스 조회
