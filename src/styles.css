@@ -42,5 +42,6 @@ input { width: 100%; border: 1px solid #46557a; border-radius: 10px; padding: 14
 .sidebar-header .icon-button { margin-left:auto; margin-right:110px; padding:8px 10px; font-size:.78rem; }
 .sidebar-header .icon-button::after { content:' 앱 설정'; }
 .connection-settings { position:fixed; top:14px; right:24px; z-index:21; width:auto; margin:0; padding:8px 12px; border:1px solid #3d4b6c; background:transparent; color:#dbe4f5; font-size:.78rem; }
+.workspace-header .live-badge { position:fixed; top:14px; right:220px; z-index:21; }
 .workspace { height:calc(100vh - 64px); }
-@media (max-width:720px) { .sidebar-header { padding:0 16px; } .sidebar-header > div { gap:10px; } .sidebar-header .eyebrow { font-size:.64rem; } .sidebar-header h2 { display:none; } .sidebar-header .icon-button { margin-left:auto; margin-right:92px; } .connection-settings { right:16px; padding:8px 9px; font-size:.7rem; } }
+@media (max-width:720px) { .sidebar-header { padding:0 16px; } .sidebar-header > div { gap:10px; } .sidebar-header .eyebrow { font-size:.64rem; } .sidebar-header h2 { display:none; } .sidebar-header .icon-button { margin-left:auto; margin-right:92px; } .connection-settings { right:16px; padding:8px 9px; font-size:.7rem; } .workspace-header .live-badge { right:170px; } }
