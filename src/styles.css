@@ -31,6 +31,14 @@ input { width: 100%; border: 1px solid #46557a; border-radius: 10px; padding: 14
 .text-slide { color:#f4f7fb; font-size:1.05rem; line-height:1.45; }
 .nav { display:flex; gap:10px; margin-top:28px; }
 .nav button { flex:1; }
+
+/* Final top navigation layout. */
+.control-app { padding-top:64px; }
+.top-nav { position:fixed; inset:0 0 auto; z-index:30; height:64px; display:flex; align-items:center; gap:18px; padding:0 24px; border-bottom:1px solid #2a3550; background:#111827ee; backdrop-filter:blur(12px); }
+.top-nav strong { font-size:.95rem; white-space:nowrap; } .top-playlist { color:#e6ebf7; font-weight:650; white-space:nowrap; } .top-actions { display:flex; align-items:center; gap:8px; margin-left:auto; } .top-actions button { padding:8px 12px; border:1px solid #3d4b6c; background:transparent; color:#dbe4f5; font-size:.78rem; } .top-live-badge { display:flex; align-items:center; gap:8px; padding:7px 10px; border:1px solid #28664f; border-radius:999px; color:#7ee2b1; font-size:.78rem; white-space:nowrap; }
+.sidebar { height:calc(100vh - 64px); padding-top:28px; } .sidebar-header { position:static; height:auto; padding:0; border:0; background:transparent; backdrop-filter:none; } .sidebar-header > div { display:block; } .sidebar-header h2 { margin:12px 0 20px; font-size:1.65rem; } .sidebar-header .icon-button { margin:0; padding:8px 10px; } .sidebar-header .icon-button::after { content:none; } .connection-settings { position:static; width:100%; margin-bottom:20px; padding:9px 10px; }
+.workspace { height:calc(100vh - 64px); } .workspace-header .live-badge { position:static; display:none; }
+@media (max-width:720px) { .top-nav { gap:10px; padding:0 16px; } .top-nav strong { font-size:.78rem; } .top-playlist { overflow:hidden; text-overflow:ellipsis; } .top-actions { gap:5px; } .top-live-badge { padding:6px 8px; font-size:.7rem; } .top-actions button { padding:7px 8px; font-size:.7rem; } }
 .workspace-actions .mode-switch, .workspace-actions .quality-select, .workspace-actions .follow-button { display:none; }
 
 /* Fixed navigation uses the existing app-settings and connection-info controls. */
