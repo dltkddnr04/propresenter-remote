@@ -48,6 +48,9 @@ input { width: 100%; border: 1px solid #46557a; border-radius: 10px; padding: 14
 .sidebar > .connection-settings { display:none; }
 .workspace { padding-top:24px; }
 .presentation-list { margin-top:0; }
+.sidebar { padding-top:16px !important; }
+.sidebar-header { position:static !important; height:auto !important; padding:0 !important; border:0 !important; background:transparent !important; }
+.sidebar-header > div { display:block !important; }
 .workspace-actions .mode-switch, .workspace-actions .quality-select, .workspace-actions .follow-button { display:none; }
 
 /* Fixed navigation uses the existing app-settings and connection-info controls. */
