@@ -40,6 +40,14 @@ input { width: 100%; border: 1px solid #46557a; border-radius: 10px; padding: 14
 .sidebar { height:calc(100vh - 64px); padding-top:28px; } .sidebar-header { position:static; height:auto; padding:0; border:0; background:transparent; backdrop-filter:none; } .sidebar-header > div { display:block; } .sidebar-header h2 { margin:12px 0 20px; font-size:1.65rem; } .sidebar-header .icon-button { margin:0; padding:8px 10px; } .sidebar-header .icon-button::after { content:none; } .connection-settings { position:static; width:100%; margin-bottom:20px; padding:9px 10px; }
 .workspace { height:calc(100vh - 64px); } .workspace-header .live-badge { position:static; display:none; }
 @media (max-width:720px) { .top-nav { gap:10px; padding:0 16px; } .top-nav strong { font-size:.78rem; } .top-playlist { overflow:hidden; text-overflow:ellipsis; } .top-actions { gap:5px; } .top-live-badge { padding:6px 8px; font-size:.7rem; } .top-actions button { padding:7px 8px; font-size:.7rem; } }
+.sidebar { padding-top:16px; }
+.sidebar-header { position:static; height:auto; padding:0; border:0; background:transparent; backdrop-filter:none; }
+.sidebar-header > div { display:block; }
+.sidebar-header h2 { margin:8px 0 14px; font-size:1.35rem; }
+.sidebar-header .icon-button { display:none; }
+.sidebar > .connection-settings { display:none; }
+.workspace { padding-top:24px; }
+.presentation-list { margin-top:0; }
 .workspace-actions .mode-switch, .workspace-actions .quality-select, .workspace-actions .follow-button { display:none; }
 
 /* Fixed navigation uses the existing app-settings and connection-info controls. */
