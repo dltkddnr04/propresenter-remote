@@ -31,6 +31,7 @@ input { width: 100%; border: 1px solid #46557a; border-radius: 10px; padding: 14
 .text-slide { color:#f4f7fb; font-size:1.05rem; line-height:1.45; }
 .nav { display:flex; gap:10px; margin-top:28px; }
 .nav button { flex:1; }
+.workspace-actions .mode-switch, .workspace-actions .quality-select, .workspace-actions .follow-button { display:none; }
 
 /* Fixed navigation uses the existing app-settings and connection-info controls. */
 .control-app { padding-top:64px; }
