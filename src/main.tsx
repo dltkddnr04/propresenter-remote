@@ -25,4 +25,4 @@ function Control({ settings, onSettings }) {
 }
 
 function App() { const [settings, setSettings] = useState(null); const connect = (next) => { localStorage.setItem(settingsKey, JSON.stringify(next)); setSettings(next); }; return settings ? <Control settings={settings} onSettings={() => setSettings(null)} /> : <Setup onConnect={connect} />; }
-createRoot(document.getElementById('root')).render(<QueryClientProvider client={new QueryClient()}><App /></QueryClientProvider>);
+createRoot(document.getElementById('root')!).render(<QueryClientProvider client={new QueryClient()}><App /></QueryClientProvider>);
