@@ -16,12 +16,14 @@ async function api(base: string, path: string): Promise<unknown> {
   const text = await response.text();
   try { return JSON.parse(text); } catch { return text; }
 }
+function unwrap(value: unknown): unknown { return (value as ApiObject)?.data ?? value; }
 function listArray(value: unknown): ApiObject[] { if (Array.isArray(value)) return value; if (!value || typeof value !== 'object') return []; const object = value as ApiObject; for (const key of ['items', 'playlist_items', 'contents', 'children', 'playlists']) if (Array.isArray(object[key])) return object[key]; return []; }
 function objectId(value: ApiObject): string | null { return value.id?.uuid || value.uuid || value.playlist_id?.uuid || value.id || null; }
 function objectName(value: ApiObject | undefined, fallback = '이름 없는 항목'): string { return value?.id?.name || value?.name || value?.title || value?.playlist_id?.name || fallback; }
 function flattenPlaylists(data: unknown): Playlist[] { const result: Playlist[] = []; const walk = (value: unknown, depth = 0) => listArray(value).forEach((item) => { const id = objectId(item); if (id) result.push({ ...item, id, name: objectName(item), depth }); ['children', 'playlists'].forEach((key) => { if (Array.isArray(item[key])) walk(item[key], depth + 1); }); }); walk(data); return result; }
 function playlistItems(data: unknown): PlaylistItem[] { const object = data as ApiObject; return (object?.playlist?.items || listArray(data)) as PlaylistItem[]; }
 function presentationUuid(item: PlaylistItem): string | null { return item.presentation_info?.presentation_uuid || null; }
+function activePlaylistId(data: unknown): string | null { const value = unwrap(data) as ApiObject; return objectId(value?.playlist || value); }
 function flattenSlides(data: unknown): Slide[] { const presentation = (data as ApiObject)?.presentation || data as ApiObject; return (presentation?.groups || []).flatMap((group: ApiObject) => (group.slides || []).map((slide: ApiObject) => ({ ...slide, groupName: group.name || '', flatIndex: 0 }))).map((slide: Slide, index: number) => ({ ...slide, flatIndex: index })); }
 function activeUuid(data: unknown): string | null { const object = data as ApiObject; return object?.presentation?.id?.uuid || object?.presentation?.uuid || object?.id?.uuid || object?.uuid || null; }
 function slideIndex(data: unknown): number { const object = data as ApiObject; for (const value of [object?.presentation_index?.index, object?.presentation_index, object?.index, object?.slide_index?.index, object?.slide_index]) { const index = Number(value); if (Number.isInteger(index)) return index; } return -1; }
@@ -37,7 +39,8 @@ function Setup({ onConnect }: { onConnect: (settings: Settings) => void }) {
 function Control({ settings, onSettings }: { settings: Settings; onSettings: () => void }) {
   const base = `http://${settings.host}:${settings.port}`; const [selected, setSelected] = useState<string | null>(null); const [followActive, setFollowActive] = useState(true); const [slideMode, setSlideMode] = useState<'preview' | 'text'>('preview'); const [thumbnailQuality, setThumbnailQuality] = useState(() => localStorage.getItem('propresenter-remote:thumbnail-quality') || '256'); const [showSettings, setShowSettings] = useState(false);
   const playlistsQuery = useQuery({ queryKey: ['playlists', base], queryFn: () => api(base, '/v1/playlists?chunked=false').then(flattenPlaylists) }); const playlists = playlistsQuery.data || [];
-  useEffect(() => { if (!selected && playlists.length) setSelected(playlists[0].id); }, [playlists, selected]);
+  const activePlaylistQuery = useQuery({ queryKey: ['active-playlist', base], queryFn: () => api(base, '/v1/playlist/active?chunked=false').then(activePlaylistId) });
+  useEffect(() => { if (!selected && playlists.length) { const activeId = activePlaylistQuery.data; setSelected(activeId && playlists.some((playlist) => playlist.id === activeId) ? activeId : playlists[0].id); } }, [playlists, selected, activePlaylistQuery.data]);
   const activePlaylist = playlists.find((playlist) => playlist.id === selected); const itemsQuery = useQuery({ queryKey: ['playlist', base, selected], queryFn: () => api(base, `/v1/playlist/${encodeURIComponent(selected as string)}?chunked=false`).then(playlistItems), enabled: Boolean(selected) });
   const presentationItems = useMemo(() => (itemsQuery.data || []).filter((item) => item.type === 'presentation' && presentationUuid(item)), [itemsQuery.data]);
   const presentations = useQueries({ queries: presentationItems.map((item) => { const uuid = presentationUuid(item) as string; return { queryKey: ['presentation', base, uuid], queryFn: () => api(base, `/v1/presentation/${encodeURIComponent(uuid)}?chunked=false`).then(flattenSlides), enabled: true }; }) });
