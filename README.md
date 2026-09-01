@@ -90,6 +90,8 @@ npm run deploy
 1. ProPresenter 설정의 Network 탭에서 API와 원격 제어 기능을 활성화합니다.
 2. ProPresenter PC의 방화벽에서 지정된 API 포트의 인바운드 연결을 허용합니다.
 3. 조작 기기와 ProPresenter PC가 같은 네트워크에 있는지 확인합니다.
-4. Local Network Access 권한을 지원하는 최신 브라우저를 사용합니다. 예: Chrome, Edge, Opera, Firefox.
+4. 브라우저에서 요청하는 로컬 네트워크 접근 권한을 허용합니다.
+
+앱은 실행 시 브라우저의 Local Network Access 지원 여부를 자동으로 확인하며, 지원되지 않는 환경에서는 별도의 호환성 안내 화면을 표시합니다.
 
 이 앱은 ProPresenter PC에 직접 요청하므로, 외부에 공개할 경우 접근 제어와 네트워크 보안을 별도로 구성해야 합니다. 브라우저와 ProPresenter 설정에 따라 CORS 또는 Local Network Access 권한 허용이 필요할 수 있습니다.
