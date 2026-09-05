@@ -1,39 +1,34 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ActiveExpectation, ActiveState, ApiObject, Slide, api, fetchActiveState, flattenSlides, groupStarts, isConfirmed, listArray, objectId, objectName, playlistItems, presentationUuid, relativeTarget, remoteDisplayMode, slideText } from './propresenter';
 import './styles.css';
 
 const settingsKey = 'propresenter-remote:connection';
+const activeStateInterval = 400;
 type Settings = { host: string; port: number };
-type ApiObject = Record<string, any>;
 type Playlist = ApiObject & { id: string; name: string; depth: number };
 type Library = ApiObject & { id: string; name: string };
-type LibraryPresentation = ApiObject & { id: string; name: string };
-type PlaylistItem = ApiObject & { type?: string; presentation_info?: { presentation_uuid?: string } };
-type Slide = ApiObject & { groupName: string; groupKey: string; flatIndex: number };
+type RemoteMode = 'text' | 'preview' | 'auto';
 
-async function api(base: string, path: string): Promise<unknown> {
-  const response = await fetch(`${base}${path}`, { cache: 'no-store', headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new Error(`${response.status} ${path}`);
-  const text = await response.text();
-  try { return JSON.parse(text); } catch { return text; }
+function flattenPlaylists(data: unknown): Playlist[] {
+  const result: Playlist[] = [];
+  const walk = (value: unknown, depth = 0) => listArray(value).forEach((item) => {
+    const id = objectId(item);
+    if (id) result.push({ ...item, id, name: objectName(item), depth });
+    ['children', 'playlists'].forEach((key) => { if (Array.isArray(item[key])) walk(item[key], depth + 1); });
+  });
+  walk(data);
+  return result;
 }
-function unwrap(value: unknown): unknown { return (value as ApiObject)?.data ?? value; }
-function listArray(value: unknown): ApiObject[] { if (Array.isArray(value)) return value; if (!value || typeof value !== 'object') return []; const object = value as ApiObject; for (const key of ['items', 'playlist_items', 'contents', 'children', 'playlists', 'libraries', 'library', 'presentations']) if (Array.isArray(object[key])) return object[key]; return []; }
-function objectId(value: ApiObject): string | null { return value.id?.uuid || value.uuid || value.playlist_id?.uuid || value.presentation_info?.presentation_uuid || value.id || null; }
-function objectName(value: ApiObject | undefined, fallback = '이름 없는 항목'): string { return value?.id?.name || value?.name || value?.title || value?.playlist_id?.name || value?.presentation_info?.name || fallback; }
-function flattenPlaylists(data: unknown): Playlist[] { const result: Playlist[] = []; const walk = (value: unknown, depth = 0) => listArray(value).forEach((item) => { const id = objectId(item); if (id) result.push({ ...item, id, name: objectName(item), depth }); ['children', 'playlists'].forEach((key) => { if (Array.isArray(item[key])) walk(item[key], depth + 1); }); }); walk(data); return result; }
-function flattenLibraries(data: unknown): Library[] { return listArray(unwrap(data)).flatMap((item) => { const id = objectId(item); return id ? [{ ...item, id, name: objectName(item, '이름 없는 라이브러리') }] : []; }); }
-function libraryPresentations(data: unknown): LibraryPresentation[] { return listArray(unwrap(data)).flatMap((item) => { const id = objectId(item); return id ? [{ ...item, id, name: objectName(item, '이름 없는 프레젠테이션') }] : []; }); }
-function playlistItems(data: unknown): PlaylistItem[] { const object = data as ApiObject; return (object?.playlist?.items || listArray(data)) as PlaylistItem[]; }
-function presentationUuid(item: PlaylistItem): string | null { return item.presentation_info?.presentation_uuid || null; }
-function activePlaylistId(data: unknown): string | null { const value = unwrap(data) as ApiObject; return value?.presentation?.playlist?.uuid || value?.playlist?.uuid || objectId(value?.playlist || value); }
-function activePlaylistContext(data: unknown): { playlistId: string | null; itemId: string | null } { const value = unwrap(data) as ApiObject; return { playlistId: activePlaylistId(data), itemId: value?.presentation?.item?.uuid || value?.item?.uuid || null }; }
-function flattenSlides(data: unknown): Slide[] { const presentation = (data as ApiObject)?.presentation || data as ApiObject; return (presentation?.groups || []).flatMap((group: ApiObject, groupIndex: number) => (group.slides || []).map((slide: ApiObject) => ({ ...slide, groupName: group.name || '', groupKey: group.uuid || group.id?.uuid || `group-${groupIndex}`, flatIndex: 0 }))).map((slide: Slide, index: number) => ({ ...slide, flatIndex: index })); }
-function activeUuid(data: unknown): string | null { const object = unwrap(data) as ApiObject; return object?.presentation?.item?.uuid || object?.presentation?.id?.uuid || object?.presentation?.uuid || object?.id?.uuid || object?.uuid || null; }
-function slideIndex(data: unknown): number { const object = unwrap(data) as ApiObject; for (const value of [object?.presentation_index?.index, object?.presentation_index, object?.index, object?.slide_index?.index, object?.slide_index]) { const index = Number(value); if (Number.isInteger(index)) return index; } return -1; }
-function slideText(slide: Slide | undefined): string { return String(slide?.text || '').replace(/\s+/g, ' ').trim(); }
-function slideLabel(slide: Slide, index: number): string { return slideText(slide).slice(0, 80) || `Slide ${index + 1}`; }
+
+function flattenLibraries(data: unknown): Library[] {
+  return listArray(data).flatMap((item) => { const id = objectId(item); return id ? [{ ...item, id, name: objectName(item, '이름 없는 라이브러리') }] : []; });
+}
+
+function useActiveState(base: string) {
+  return useQuery({ queryKey: ['active-state', base], queryFn: ({ signal }) => fetchActiveState(base, signal), refetchInterval: activeStateInterval, refetchIntervalInBackground: false, retry: 1, retryDelay: 250 });
+}
 
 function ConnectionForm({ initial, onConnect, onCancel }: { initial?: Settings | null; onConnect: (settings: Settings) => void; onCancel?: () => void }) {
   const [host, setHost] = useState(initial?.host || ''); const [port, setPort] = useState<number | string>(initial?.port || 1025); const [error, setError] = useState('');
@@ -41,89 +36,194 @@ function ConnectionForm({ initial, onConnect, onCancel }: { initial?: Settings |
   return <form onSubmit={submit}><label>PC IP 주소<input value={host} onChange={(event) => setHost(event.target.value)} placeholder="예: 192.168.0.10" autoComplete="off" required /></label><span className="hint">같은 네트워크에 있는 ProPresenter PC의 IPv4 주소</span><label>포트 번호<input type="number" value={port} onChange={(event) => setPort(event.target.value)} min="1" max="65535" required /></label>{error && <p className="form-error">{error}</p>}<div className="form-actions">{onCancel && <button type="button" className="secondary-button" onClick={onCancel}>취소</button>}<button type="submit">ProPresenter 연결</button></div></form>;
 }
 
-function AppPanel({ mode, eyebrow, title, titleId, className = '', onClose, children }: { mode: 'page' | 'modal'; eyebrow: string; title: string; titleId: string; className?: string; onClose?: () => void; children: React.ReactNode }) {
+function AppPanel({ mode, eyebrow, title, titleId, onClose, children }: { mode: 'page' | 'modal'; eyebrow: string; title: string; titleId: string; onClose?: () => void; children: React.ReactNode }) {
   if (mode === 'modal') return <div className="settings-backdrop" role="presentation" onClick={onClose}><section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(event) => event.stopPropagation()}><div className="settings-heading"><div><span className="eyebrow">{eyebrow}</span><h2 id={titleId}>{title}</h2></div><button className="icon-button" onClick={onClose} aria-label={`${title} 닫기`}>×</button></div>{children}</section></div>;
-  return <main className="shell"><section className={`card ${className}`}><span className="eyebrow">{eyebrow}</span><h1 id={titleId}>{title}</h1>{children}</section></main>;
+  return <main className="shell"><section className="card"><span className="eyebrow">{eyebrow}</span><h1 id={titleId}>{title}</h1>{children}</section></main>;
 }
 
-function Setup({ onConnect }: { onConnect: (settings: Settings) => void }) {
-  const saved = JSON.parse(localStorage.getItem(settingsKey) || 'null') as Settings | null;
-  return <AppPanel mode="page" eyebrow="PROPRESENTER REMOTE" title="연결 설정" titleId="connection-setup-title"><p className="intro">조작할 ProPresenter가 설치된 PC의 네트워크 정보를 입력하세요.</p><ConnectionForm initial={saved} onConnect={onConnect} /></AppPanel>;
-}
-
-function Control({ settings, onSettings }: { settings: Settings; onSettings: () => void }) {
-  const base = `http://${settings.host}:${settings.port}`; const workspaceRef = useRef<HTMLElement>(null); const [selected, setSelected] = useState<string | null>(null); const [selectedSource, setSelectedSource] = useState<'playlist' | 'library'>('playlist'); const [selectedLibraryPresentation, setSelectedLibraryPresentation] = useState<{ libraryId: string; presentationId: string; name: string } | null>(null); const [followActive, setFollowActive] = useState(true); const [slideMode, setSlideMode] = useState<'preview' | 'text'>('preview'); const [thumbnailQuality, setThumbnailQuality] = useState(() => localStorage.getItem('propresenter-remote:thumbnail-quality') || '256'); const [showSettings, setShowSettings] = useState(false);
-  const librariesQuery = useQuery({ queryKey: ['libraries', base], queryFn: () => api(base, '/v1/libraries?chunked=false').then(flattenLibraries) }); const libraries = librariesQuery.data || [];
-  const playlistsQuery = useQuery({ queryKey: ['playlists', base], queryFn: () => api(base, '/v1/playlists?chunked=false').then(flattenPlaylists) }); const playlists = playlistsQuery.data || [];
-  const activePlaylistQuery = useQuery({ queryKey: ['active-playlist', base], queryFn: () => api(base, '/v1/playlist/active?chunked=false').then(activePlaylistId), refetchInterval: 1000 });
-  useEffect(() => { if (!selected && playlists.length && !activePlaylistQuery.isLoading) { const activeId = activePlaylistQuery.data; setSelected(activeId && playlists.some((playlist) => playlist.id === activeId) ? activeId : playlists[0].id); } }, [playlists, selected, activePlaylistQuery.data, activePlaylistQuery.isLoading]);
-  useEffect(() => { const activeId = activePlaylistQuery.data; if (followActive && activeId && selected !== activeId && playlists.some((playlist) => playlist.id === activeId)) { setSelectedSource('playlist'); setSelectedLibraryPresentation(null); setSelected(activeId); } }, [activePlaylistQuery.data, followActive, playlists]);
-  const activePlaylist = playlists.find((playlist) => playlist.id === selected); const itemsQuery = useQuery({ queryKey: ['playlist', base, selected], queryFn: () => api(base, `/v1/playlist/${encodeURIComponent(selected as string)}?chunked=false`).then(playlistItems), enabled: selectedSource === 'playlist' && Boolean(selected) }); const libraryPresentationQuery = useQuery({ queryKey: ['library-presentation', base, selectedLibraryPresentation?.presentationId], queryFn: () => api(base, `/v1/presentation/${encodeURIComponent(selectedLibraryPresentation?.presentationId as string)}?chunked=false`).then(flattenSlides), enabled: selectedSource === 'library' && Boolean(selectedLibraryPresentation) });
-  const presentationItems = useMemo(() => (itemsQuery.data || []).filter((item) => item.type === 'presentation' && presentationUuid(item)), [itemsQuery.data]);
-  const presentations = useQueries({ queries: presentationItems.map((item) => { const uuid = presentationUuid(item) as string; return { queryKey: ['presentation', base, uuid], queryFn: () => api(base, `/v1/presentation/${encodeURIComponent(uuid)}?chunked=false`).then(flattenSlides), enabled: true }; }) });
-  const activeQuery = useQuery({ queryKey: ['active-presentation', base], queryFn: () => api(base, '/v1/presentation/active?chunked=false').then(activeUuid), refetchInterval: 1000 }); const indexQuery = useQuery({ queryKey: ['active-slide', base], queryFn: () => api(base, '/v1/presentation/slide_index?chunked=false').then(slideIndex), refetchInterval: 1000 });
-  const trigger = useMutation({ mutationFn: ({ uuid, index }: { uuid: string; index: number }) => api(base, `/v1/presentation/${encodeURIComponent(uuid)}/${index}/trigger`) }); const libraryTrigger = useMutation({ mutationFn: ({ libraryId, presentationId, index }: { libraryId: string; presentationId: string; index: number }) => api(base, `/v1/library/${encodeURIComponent(libraryId)}/${encodeURIComponent(presentationId)}/${index}/trigger`) }); const relativeTrigger = useMutation({ mutationFn: (next: boolean) => api(base, next ? '/v1/trigger/next' : '/v1/trigger/previous') }); const connectedError = playlistsQuery.error as Error | null;
-  useEffect(() => {
-    const presentationId = activeQuery.data; const activeIndex = indexQuery.data ?? -1;
-    if (!followActive || !presentationId || activeIndex < 0) return;
-    const scrollToActiveSlide = () => {
-      const workspace = workspaceRef.current;
-      const slide = Array.from(workspace?.querySelectorAll<HTMLButtonElement>('.slide-card') || []).find((card) => card.dataset.presentationUuid === presentationId && Number(card.dataset.slideIndex) === activeIndex);
-      if (!workspace || !slide) return;
-      const workspaceRect = workspace.getBoundingClientRect(); const slideRect = slide.getBoundingClientRect();
-      const targetTop = workspace.scrollTop + (slideRect.top - workspaceRect.top) - (workspace.clientHeight / 3 - slideRect.height / 2);
-      workspace.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
-    };
-    const frame = window.requestAnimationFrame(scrollToActiveSlide);
-    const retry = window.setTimeout(scrollToActiveSlide, 100);
-    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(retry); };
-  }, [activeQuery.data, indexQuery.data, followActive, selected, selectedSource, presentationItems, presentations, libraryPresentationQuery.data]);
-  useEffect(() => { const handleKeyDown = (event: KeyboardEvent) => { if (event.repeat) return; const target = event.target as HTMLElement | null; const isTextEntry = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable; if (isTextEntry || target?.closest('[role="dialog"]')) return; const next = event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === ' '; const previous = event.key === 'ArrowLeft' || event.key === 'ArrowUp'; if (!next && !previous) return; if (event.key === ' ' && target?.closest('button, a')) return; event.preventDefault(); relativeTrigger.mutate(next); }; window.addEventListener('keydown', handleKeyDown); return () => window.removeEventListener('keydown', handleKeyDown); }, [relativeTrigger]);
-  const overrideFollow = (event: React.SyntheticEvent<HTMLElement>) => { if (!(event.target as HTMLElement).closest('.follow-button')) setFollowActive(false); };
-  useEffect(() => { const activeItem = presentationItems.find((item) => presentationUuid(item) === activeQuery.data); const playlistName = selectedSource === 'library' ? '라이브러리' : activePlaylist?.name || '재생목록'; const presentationName = selectedSource === 'library' ? selectedLibraryPresentation?.name || '' : activeItem ? objectName(activeItem) : ''; const timer = window.setTimeout(() => window.dispatchEvent(new CustomEvent('active-location-change', { detail: { playlistName, presentationName } })), 0); return () => window.clearTimeout(timer); }, [activePlaylist?.name, activeQuery.data, presentationItems, selectedLibraryPresentation?.name, selectedSource]);
-  useEffect(() => { const timer = window.setTimeout(() => window.dispatchEvent(new CustomEvent('follow-mode-change', { detail: followActive })), 0); return () => window.clearTimeout(timer); }, [followActive]);
-  return <main className="control-app"><aside className="sidebar"><div className="sidebar-header"><h2>콘텐츠</h2><button className="icon-button" onClick={() => setShowSettings(true)} aria-label="앱 설정">⚙</button></div><div className="connection-pill"><span className="status-dot" />{settings.host}:{settings.port}</div><button className="connection-settings" onClick={onSettings}>연결 정보 변경</button><LibrarySection base={base} libraries={libraries} isLoading={librariesQuery.isLoading} error={librariesQuery.error as Error | null} selectedPresentation={selectedLibraryPresentation ? `${selectedLibraryPresentation.libraryId}:${selectedLibraryPresentation.presentationId}` : null} onSelectPresentation={(libraryId, presentation) => { setSelectedSource('library'); setSelectedLibraryPresentation({ libraryId, presentationId: presentation.id, name: presentation.name }); }} /><section className="sidebar-section"><h3 className="sidebar-section-title">재생목록</h3>{playlistsQuery.isLoading && <p className="sidebar-status">재생목록 조회 중…</p>}{connectedError && <p className="form-error">연결 실패: {connectedError.message}</p>}<nav className="playlist-list" aria-label="재생목록 목록">{playlists.map((playlist) => <button className={`playlist-item ${selectedSource === 'playlist' && playlist.id === selected ? 'active' : ''}`} style={{ paddingLeft: 10 + playlist.depth * 15 }} key={playlist.id} onClick={() => { setSelectedSource('playlist'); setSelectedLibraryPresentation(null); setSelected(playlist.id); }}>{playlist.name}</button>)}</nav></section></aside><section ref={workspaceRef} className="workspace" onWheel={overrideFollow} onTouchStart={overrideFollow} onPointerDown={overrideFollow} onKeyDown={overrideFollow} tabIndex={-1}><header className="workspace-header"><div><span className="eyebrow">PLAYLIST</span><h1>{activePlaylist?.name || '재생목록'}</h1></div><div className="workspace-actions"><div className="mode-switch" role="group" aria-label="슬라이드 표시 방식"><button className={slideMode === 'preview' ? 'active' : ''} onClick={() => setSlideMode('preview')} aria-pressed={slideMode === 'preview'}>미리보기</button><button className={slideMode === 'text' ? 'active' : ''} onClick={() => setSlideMode('text')} aria-pressed={slideMode === 'text'}>텍스트</button></div><label className="quality-select">해상도<select value={thumbnailQuality} onChange={(event) => { setThumbnailQuality(event.target.value); localStorage.setItem('propresenter-remote:thumbnail-quality', event.target.value); }}><option value="64">64</option><option value="128">128</option><option value="256">256</option><option value="512">512</option></select></label><button className={`follow-button ${followActive ? 'active' : ''}`} onClick={() => setFollowActive((value) => !value)} aria-pressed={followActive}>{followActive ? '현재 슬라이드 추적 중' : '현재 슬라이드 따라가기'}</button><span className="live-badge">연결됨</span></div></header>{selectedSource === 'playlist' && itemsQuery.isLoading && <p>재생목록 항목 조회 중…</p>}{selectedSource === 'playlist' && itemsQuery.error && <p className="form-error">재생목록을 불러올 수 없습니다: {(itemsQuery.error as Error).message}</p>}<div className="presentation-list">{selectedSource === 'library' ? selectedLibraryPresentation ? <PresentationBlock item={{ type: 'presentation', name: selectedLibraryPresentation.name, presentation_info: { presentation_uuid: selectedLibraryPresentation.presentationId } }} base={base} slides={libraryPresentationQuery.data || []} isLoading={libraryPresentationQuery.isLoading} activeUuid={activeQuery.data} activeIndex={indexQuery.data ?? -1} slideMode={slideMode} thumbnailQuality={thumbnailQuality} onTrigger={(uuid, index) => libraryTrigger.mutate({ libraryId: selectedLibraryPresentation.libraryId, presentationId: uuid, index })} /> : <p className="sidebar-status">라이브러리에서 프레젠테이션을 선택하세요.</p> : (itemsQuery.data || []).map((item, itemIndex) => item.type === 'header' ? <div className="header-card" key={`header-${itemIndex}`}>{objectName(item, '구분')}</div> : item.type === 'presentation' ? <PresentationBlock key={`${presentationUuid(item)}-${itemIndex}`} base={base} item={item} slides={presentations[presentationItems.indexOf(item)]?.data || []} isLoading={presentations[presentationItems.indexOf(item)]?.isLoading || false} activeUuid={activeQuery.data} activeIndex={indexQuery.data ?? -1} slideMode={slideMode} thumbnailQuality={thumbnailQuality} onTrigger={(uuid, index) => trigger.mutate({ uuid, index })} /> : null)}</div><div className="nav"><button className="prev" onClick={() => relativeTrigger.mutate(false)}>◀ 이전</button><button className="next" onClick={() => relativeTrigger.mutate(true)}>다음 ▶</button></div>{trigger.error && <p className="form-error">슬라이드 실행 실패: {(trigger.error as Error).message}</p>}{libraryTrigger.error && <p className="form-error">라이브러리 슬라이드 실행 실패: {(libraryTrigger.error as Error).message}</p>}{relativeTrigger.error && <p className="form-error">슬라이드 이동 실패: {(relativeTrigger.error as Error).message}</p>}</section>{showSettings && <SettingsPanel slideMode={slideMode} setSlideMode={setSlideMode} thumbnailQuality={thumbnailQuality} setThumbnailQuality={setThumbnailQuality} followActive={followActive} setFollowActive={setFollowActive} onClose={() => setShowSettings(false)} />}</main>;
-}
-
-function LibrarySection({ base, libraries, isLoading, error, selectedPresentation, onSelectPresentation }: { base: string; libraries: Library[]; isLoading: boolean; error: Error | null; selectedPresentation: string | null; onSelectPresentation: (libraryId: string, presentation: LibraryPresentation) => void }) {
-  const [open, setOpen] = useState(true);
-  return <section className="sidebar-section"><button className="sidebar-section-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}><span>라이브러리</span><span aria-hidden="true">{open ? '⌄' : '›'}</span></button>{open && <div className="library-list">{isLoading && <p className="sidebar-status">라이브러리 조회 중…</p>}{error && <p className="form-error">라이브러리를 불러올 수 없습니다: {error.message}</p>}{!isLoading && !error && libraries.length === 0 && <p className="sidebar-status">라이브러리가 없습니다.</p>}{libraries.map((library) => <LibraryGroup key={library.id} base={base} library={library} selectedPresentation={selectedPresentation} onSelectPresentation={onSelectPresentation} />)}</div>}</section>;
-}
-
-function LibraryGroup({ base, library, selectedPresentation, onSelectPresentation }: { base: string; library: Library; selectedPresentation: string | null; onSelectPresentation: (libraryId: string, presentation: LibraryPresentation) => void }) {
-  const [open, setOpen] = useState(false); const presentationsQuery = useQuery({ queryKey: ['library', base, library.id], queryFn: () => api(base, `/v1/library/${encodeURIComponent(library.id)}?chunked=false`).then(libraryPresentations), enabled: open }); const presentations = presentationsQuery.data || [];
-  return <div className="library-group"><button className="library-item" onClick={() => setOpen((value) => !value)} aria-expanded={open}><span className="library-item-label"><span aria-hidden="true">{open ? '⌄' : '›'}</span>{library.name}</span></button>{open && <div className="library-presentations">{presentationsQuery.isLoading && <p className="sidebar-status">불러오는 중…</p>}{presentationsQuery.error && <p className="form-error">프레젠테이션을 불러올 수 없습니다.</p>}{!presentationsQuery.isLoading && !presentationsQuery.error && presentations.length === 0 && <p className="sidebar-status">프레젠테이션이 없습니다.</p>}{presentations.map((presentation) => { const key = `${library.id}:${presentation.id}`; return <button className={`library-presentation-item ${selectedPresentation === key ? 'active' : ''}`} key={presentation.id} onClick={() => onSelectPresentation(library.id, presentation)}>{presentation.name}</button>; })}</div>}</div>;
-}
-
-function PresentationBlock({ base, item, slides, isLoading, activeUuid, activeIndex, slideMode, thumbnailQuality, onTrigger }: { base: string; item: PlaylistItem; slides: Slide[]; isLoading: boolean; activeUuid?: string | null; activeIndex: number; slideMode: 'preview' | 'text'; thumbnailQuality: string; onTrigger: (uuid: string, index: number) => void }) {
-  const uuid = presentationUuid(item); const isCurrentPresentation = Boolean(uuid && activeUuid === uuid);
-  return <section className="presentation-block"><div className="presentation-heading"><strong>{objectName(item)}</strong><small>{isLoading ? '불러오는 중…' : `${slides.length} slides`}</small></div>{!uuid && <p className="form-error">이 항목에 presentation_uuid가 없습니다.</p>}{isLoading ? <p>슬라이드 조회 중…</p> : <div className="slide-grid">{slides.map((slide, index) => { const label = slideLabel(slide, index); const current = isCurrentPresentation && activeIndex === index; return <button className={`slide-card ${current ? 'active' : ''}`} data-presentation-uuid={uuid || ''} data-slide-index={index} key={`${uuid}-${index}`} onClick={() => uuid && onTrigger(uuid, index)}>{slideMode === 'preview' ? <span className="slide-preview"><img loading="lazy" src={`${base}/v1/presentation/${encodeURIComponent(uuid as string)}/thumbnail/${index}?quality=${thumbnailQuality}`} onError={(event) => { event.currentTarget.style.display = 'none'; }} alt="" /></span> : <span className="slide-preview text-slide">{label}</span>}<span className="slide-meta"><span>{index + 1}</span>{slide.groupName && <span>{slide.groupName}</span>}</span></button>; })}</div>}</section>;
-}
-
-function SettingsPanel({ slideMode, setSlideMode, thumbnailQuality, setThumbnailQuality, followActive, setFollowActive, onClose }: { slideMode: 'preview' | 'text'; setSlideMode: (mode: 'preview' | 'text') => void; thumbnailQuality: string; setThumbnailQuality: (quality: string) => void; followActive: boolean; setFollowActive: (active: boolean) => void; onClose: () => void }) { return <AppPanel mode="modal" eyebrow="SETTINGS" title="앱 설정" titleId="settings-title" onClose={onClose}><label className="setting-row">슬라이드 표시 방식<select value={slideMode} onChange={(event) => setSlideMode(event.target.value as 'preview' | 'text')}><option value="preview">미리보기</option><option value="text">텍스트</option></select></label><label className="setting-row">미리보기 해상도<select value={thumbnailQuality} onChange={(event) => { setThumbnailQuality(event.target.value); localStorage.setItem('propresenter-remote:thumbnail-quality', event.target.value); }}><option value="64">64</option><option value="128">128</option><option value="256">256</option><option value="512">512</option></select></label><label className="setting-check"><input type="checkbox" checked={followActive} onChange={(event) => setFollowActive(event.target.checked)} />현재 슬라이드 자동 추적</label></AppPanel>; }
-
+function Setup({ onConnect }: { onConnect: (settings: Settings) => void }) { const saved = JSON.parse(localStorage.getItem(settingsKey) || 'null') as Settings | null; return <AppPanel mode="page" eyebrow="PROPRESENTER REMOTE" title="연결 설정" titleId="connection-setup-title"><p className="intro">조작할 ProPresenter가 설치된 PC의 네트워크 정보를 입력하세요.</p><ConnectionForm initial={saved} onConnect={onConnect} /></AppPanel>; }
 function ConnectionSettingsPanel({ settings, onConnect, onClose }: { settings: Settings; onConnect: (settings: Settings) => void; onClose: () => void }) { return <AppPanel mode="modal" eyebrow="CONNECTION" title="연결 정보" titleId="connection-settings-title" onClose={onClose}><ConnectionForm initial={settings} onConnect={onConnect} onCancel={onClose} /></AppPanel>; }
-function BrowserSupportNotice() { const browser = navigator.userAgent.includes('Edg/') ? 'Edge' : navigator.userAgent.includes('OPR/') ? 'Opera' : navigator.userAgent.includes('Firefox/') ? 'Firefox' : navigator.userAgent.includes('Chrome/') ? 'Chrome' : '현재 브라우저'; return <AppPanel mode="page" eyebrow="BROWSER CHECK" title="지원되지 않는 브라우저" titleId="browser-support-title" className="browser-notice"><p className="intro">이 웹앱은 ProPresenter가 설치된 PC의 로컬 네트워크에 접근할 수 있어야 작동합니다.</p><p><strong>{browser}</strong>의 현재 버전 또는 설정에서는 필요한 Local Network Access 기능을 사용할 수 없습니다.</p><p>Local Network Access를 지원하는 최신 브라우저로 업데이트하거나 다른 지원 브라우저에서 다시 열어주세요.</p><p className="browser-examples"><strong>지원 브라우저 예시</strong><span>Chrome · Edge · Opera · Firefox</span></p></AppPanel>; }
-function RemoteSlide({ base, label, slide, presentationId, index, mode }: { base: string; label: string; slide: Slide | undefined; presentationId: string | null | undefined; index: number; mode: 'text' | 'preview' | 'auto' }) {
-  const text = slideText(slide); const displayPreview = mode === 'preview' || (mode === 'auto' && !text);
-  return <section className={`remote-slide ${displayPreview ? 'remote-preview' : 'remote-text'}`}><span className="remote-slide-label">{label}</span>{slide ? displayPreview ? <img src={`${base}/v1/presentation/${encodeURIComponent(presentationId || '')}/thumbnail/${index}?quality=512`} alt={`${label} 슬라이드 미리보기`} /> : <p>{text || '텍스트 없음'}</p> : <p className="remote-empty">표시할 슬라이드가 없습니다.</p>}</section>;
+function BrowserSupportNotice() { return <AppPanel mode="page" eyebrow="BROWSER CHECK" title="지원되지 않는 브라우저" titleId="browser-support-title"><p className="intro">이 웹앱은 ProPresenter가 설치된 PC의 로컬 네트워크에 접근할 수 있어야 작동합니다.</p><p>Local Network Access를 지원하는 최신 브라우저에서 다시 열어주세요.</p><p className="browser-examples"><strong>지원 브라우저 예시</strong><span>Chrome · Edge · Opera · Firefox</span></p></AppPanel>; }
+
+function useNearViewport() {
+  const ref = useRef<HTMLElement>(null); const [near, setNear] = useState(false);
+  useEffect(() => { const node = ref.current; if (!node || !('IntersectionObserver' in window)) return setNear(true); const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) { setNear(true); observer.disconnect(); } }, { rootMargin: '900px 0px' }); observer.observe(node); return () => observer.disconnect(); }, []);
+  return { ref, near };
 }
+
+function PresentationBlock({ base, item, active, slideMode, thumbnailQuality, onReady, onTrigger }: { base: string; item: ApiObject; active?: ActiveState; slideMode: 'preview' | 'text'; thumbnailQuality: string; onReady: () => void; onTrigger: (id: string, index: number) => void }) {
+  const uuid = presentationUuid(item); const { ref, near } = useNearViewport();
+  const query = useQuery({ queryKey: ['presentation', base, uuid], queryFn: ({ signal }) => api(base, `/v1/presentation/${encodeURIComponent(uuid as string)}?chunked=false`, signal).then(flattenSlides), enabled: Boolean(uuid) && (near || active?.presentationId === uuid), retry: 1 });
+  const slides = query.data || [];
+  useEffect(() => { if (slides.length) onReady(); }, [onReady, slides.length]);
+  return <section ref={ref} className="presentation-block"><div className="presentation-heading"><strong>{objectName(item)}</strong><small>{query.isLoading ? '불러오는 중…' : `${slides.length} slides`}</small></div>{query.isLoading && <p className="sidebar-status">슬라이드 조회 중…</p>}{query.error && <p className="form-error">프레젠테이션을 불러올 수 없습니다.</p>}{!query.isLoading && <div className="slide-grid">{slides.map((slide, index) => { const current = active?.presentationId === uuid && active.slideIndex === index; return <button className={`slide-card ${current ? 'active' : ''}`} data-presentation-uuid={uuid || ''} data-slide-index={index} key={`${uuid}-${index}`} onClick={() => uuid && onTrigger(uuid, index)}>{slideMode === 'preview' ? <span className="slide-preview"><img loading="lazy" src={`${base}/v1/presentation/${encodeURIComponent(uuid as string)}/thumbnail/${index}?quality=${thumbnailQuality}`} alt="" /></span> : <span className="slide-preview text-slide">{slideText(slide) || `${index + 1}`}</span>}<span className="slide-meta"><span>{index + 1}</span>{slide.groupName && <span>{slide.groupName}</span>}</span></button>; })}</div>}</section>;
+}
+
+function TopNav({ settings, active, title, following, onFollow, onSettings, onConnection }: { settings: Settings; active?: ActiveState; title: string; following: boolean; onFollow: () => void; onSettings: () => void; onConnection: () => void }) { return <nav className="top-nav"><strong>ProPresenter Remote</strong><span className="top-playlist">{title}</span><div className="top-actions"><span className="top-live-badge"><span className="status-dot" />{settings.host}:{settings.port} · {active ? '연결됨' : '연결 확인 중'}</span><button className="top-follow-button" disabled={following} onClick={onFollow}>{following ? '현재 슬라이드 추적 중' : '현재 슬라이드 따라가기'}</button><button onClick={() => window.location.assign('/remote')}>리모컨</button><button onClick={onSettings}>앱 설정</button><button onClick={onConnection}>연결 정보</button></div></nav>; }
+
+function LibraryGroup({ base, library, onSelect }: { base: string; library: Library; onSelect: (libraryId: string, presentation: ApiObject) => void }) {
+  const [open, setOpen] = useState(false); const presentationsQuery = useQuery({ queryKey: ['library', base, library.id], queryFn: ({ signal }) => api(base, `/v1/library/${encodeURIComponent(library.id)}?chunked=false`, signal).then(listArray), enabled: open, retry: 1 });
+  return <div className="library-group"><button className="library-item" onClick={() => setOpen((value) => !value)} aria-expanded={open}><span className="library-item-label"><span aria-hidden="true">{open ? '⌄' : '›'}</span>{library.name}</span></button>{open && <div className="library-presentations">{presentationsQuery.isLoading && <p className="sidebar-status">불러오는 중…</p>}{(presentationsQuery.data || []).map((presentation) => <button key={objectId(presentation)} className="library-presentation-item" onClick={() => onSelect(library.id, presentation)}>{objectName(presentation)}</button>)}</div>}</div>;
+}
+
+function LibrarySection({ base, onSelect }: { base: string; onSelect: (libraryId: string, presentation: ApiObject) => void }) {
+  const [open, setOpen] = useState(true); const librariesQuery = useQuery({ queryKey: ['libraries', base], queryFn: ({ signal }) => api(base, '/v1/libraries?chunked=false', signal).then(flattenLibraries), retry: 1 });
+  return <section className="sidebar-section"><button className="sidebar-section-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}><span>라이브러리</span><span aria-hidden="true">{open ? '⌄' : '›'}</span></button>{open && <div className="library-list">{librariesQuery.isLoading && <p className="sidebar-status">라이브러리 조회 중…</p>}{(librariesQuery.data || []).map((library) => <LibraryGroup key={library.id} base={base} library={library} onSelect={onSelect} />)}</div>}</section>;
+}
+
+function Controller({ settings, onConnection }: { settings: Settings; onConnection: () => void }) {
+  const base = `http://${settings.host}:${settings.port}`;
+  const queryClient = useQueryClient();
+  const activeQuery = useActiveState(base);
+  const active = activeQuery.data;
+  const [source, setSource] = useState<'playlist' | 'library'>('playlist');
+  const [selected, setSelected] = useState<string | null>(null);
+  const [selectedLibrary, setSelectedLibrary] = useState<{ libraryId: string; presentationId: string; name: string } | null>(null);
+  const [following, setFollowing] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  const [slideMode, setSlideMode] = useState<'preview' | 'text'>(() => localStorage.getItem('propresenter-remote:slide-mode') === 'text' ? 'text' : 'preview');
+  const [thumbnailQuality, setThumbnailQuality] = useState(() => localStorage.getItem('propresenter-remote:thumbnail-quality') || '256');
+  const [renderVersion, setRenderVersion] = useState(0);
+  const workspaceRef = useRef<HTMLElement>(null);
+  const markRendered = useCallback(() => setRenderVersion((value) => value + 1), []);
+
+  const playlistsQuery = useQuery({ queryKey: ['playlists', base], queryFn: ({ signal }) => api(base, '/v1/playlists?chunked=false', signal).then(flattenPlaylists), retry: 1 });
+  const playlists = playlistsQuery.data || [];
+  useEffect(() => {
+    if (!selected && playlists.length) setSelected(active?.playlistId && playlists.some((item) => item.id === active.playlistId) ? active.playlistId : playlists[0].id);
+  }, [active?.playlistId, playlists, selected]);
+  useEffect(() => {
+    if (following && active?.playlistId && playlists.some((item) => item.id === active.playlistId)) {
+      setSource('playlist');
+      setSelectedLibrary(null);
+      setSelected(active.playlistId);
+    }
+  }, [active?.playlistId, following, playlists]);
+
+  const selectedPlaylist = playlists.find((item) => item.id === selected);
+  const itemsQuery = useQuery({
+    queryKey: ['playlist', base, selected],
+    queryFn: ({ signal }) => api(base, `/v1/playlist/${encodeURIComponent(selected as string)}?chunked=false`, signal).then(playlistItems),
+    enabled: source === 'playlist' && Boolean(selected),
+    retry: 1,
+  });
+  const refreshActiveState = () => queryClient.refetchQueries({ queryKey: ['active-state', base], type: 'active' });
+  const trigger = useMutation({ mutationFn: ({ id, index }: { id: string; index: number }) => api(base, `/v1/presentation/${encodeURIComponent(id)}/${index}/trigger`), onSuccess: refreshActiveState });
+  const libraryTrigger = useMutation({ mutationFn: ({ libraryId, id, index }: { libraryId: string; id: string; index: number }) => api(base, `/v1/library/${encodeURIComponent(libraryId)}/${encodeURIComponent(id)}/${index}/trigger`) });
+  const relativeTrigger = useMutation({ mutationFn: (next: boolean) => api(base, next ? '/v1/trigger/next' : '/v1/trigger/previous'), onSuccess: refreshActiveState });
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat || relativeTrigger.isPending) return;
+      const target = event.target as HTMLElement | null;
+      const isTextEntry = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable;
+      if (isTextEntry || target?.closest('[role="dialog"]')) return;
+      const next = event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === ' ';
+      const previous = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
+      if (!next && !previous) return;
+      if (event.key === ' ' && target?.closest('button, a')) return;
+      event.preventDefault();
+      relativeTrigger.mutate(next);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [relativeTrigger]);
+
+  useEffect(() => {
+    if (!following || !active?.presentationId || active.slideIndex < 0) return;
+    const workspace = workspaceRef.current;
+    const target = workspace?.querySelector<HTMLButtonElement>(`.slide-card[data-presentation-uuid="${active.presentationId}"][data-slide-index="${active.slideIndex}"]`);
+    if (!workspace || !target) return;
+    const box = workspace.getBoundingClientRect();
+    const slide = target.getBoundingClientRect();
+    workspace.scrollTo({ top: Math.max(0, workspace.scrollTop + slide.top - box.top - (workspace.clientHeight / 3 - slide.height / 2)), behavior: 'smooth' });
+  }, [active?.presentationId, active?.slideIndex, following, renderVersion]);
+
+  const activeItem = (itemsQuery.data || []).find((item) => presentationUuid(item) === active?.presentationId);
+  const title = source === 'library'
+    ? `라이브러리 / ${selectedLibrary?.name || '프레젠테이션'}`
+    : `${selectedPlaylist?.name || '재생목록'}${activeItem ? ` / ${objectName(activeItem)}` : ''}`;
+  const chooseLibraryPresentation = (libraryId: string, presentation: ApiObject) => {
+    const presentationId = presentationUuid(presentation) || objectId(presentation);
+    if (!presentationId) return;
+    setFollowing(false);
+    setSource('library');
+    setSelectedLibrary({ libraryId, presentationId, name: objectName(presentation) });
+  };
+  const choosePlaylist = (playlistId: string) => {
+    setFollowing(false);
+    setSource('playlist');
+    setSelectedLibrary(null);
+    setSelected(playlistId);
+  };
+  const saveSlideMode = (value: 'preview' | 'text') => { localStorage.setItem('propresenter-remote:slide-mode', value); setSlideMode(value); };
+  const saveThumbnailQuality = (value: string) => { localStorage.setItem('propresenter-remote:thumbnail-quality', value); setThumbnailQuality(value); };
+  const libraryItem = selectedLibrary ? { name: selectedLibrary.name, presentation_info: { presentation_uuid: selectedLibrary.presentationId } } : null;
+
+  return <>
+    <TopNav settings={settings} active={active} title={title} following={following} onFollow={() => setFollowing(true)} onSettings={() => setShowSettings(true)} onConnection={onConnection} />
+    <main className="control-app">
+      <aside className="sidebar">
+        <LibrarySection base={base} onSelect={chooseLibraryPresentation} />
+        <section className="sidebar-section">
+          <h3 className="sidebar-section-title">재생목록</h3>
+          {playlistsQuery.isLoading && <p className="sidebar-status">재생목록 조회 중…</p>}
+          {playlistsQuery.error && <p className="form-error">연결 실패: {(playlistsQuery.error as Error).message}</p>}
+          <nav className="playlist-list" aria-label="재생목록 목록">
+            {playlists.map((playlist) => <button key={playlist.id} className={`playlist-item ${source === 'playlist' && playlist.id === selected ? 'active' : ''}`} style={{ paddingLeft: 10 + playlist.depth * 15 }} onClick={() => choosePlaylist(playlist.id)}>{playlist.name}</button>)}
+          </nav>
+        </section>
+      </aside>
+      <section ref={workspaceRef} className="workspace" onWheel={() => setFollowing(false)} onTouchMove={() => setFollowing(false)} tabIndex={-1}>
+        {source === 'playlist' && <>
+          {itemsQuery.isLoading && <p>재생목록 항목 조회 중…</p>}
+          {itemsQuery.error && <p className="form-error">재생목록을 불러올 수 없습니다.</p>}
+          <div className="presentation-list">
+            {(itemsQuery.data || []).map((item, index) => item.type === 'header'
+              ? <div className="header-card" key={`header-${index}`}>{objectName(item, '구분')}</div>
+              : item.type === 'presentation'
+                ? <PresentationBlock key={`${presentationUuid(item)}-${index}`} base={base} item={item} active={active} slideMode={slideMode} thumbnailQuality={thumbnailQuality} onReady={markRendered} onTrigger={(id, slideIndex) => trigger.mutate({ id, index: slideIndex })} />
+                : null)}
+          </div>
+        </>}
+        {source === 'library' && libraryItem && <div className="presentation-list">
+          <PresentationBlock base={base} item={libraryItem} active={active} slideMode={slideMode} thumbnailQuality={thumbnailQuality} onReady={markRendered} onTrigger={(id, slideIndex) => libraryTrigger.mutate({ libraryId: selectedLibrary!.libraryId, id, index: slideIndex })} />
+        </div>}
+      </section>
+    </main>
+    {showSettings && <AppPanel mode="modal" eyebrow="SETTINGS" title="앱 설정" titleId="settings-title" onClose={() => setShowSettings(false)}>
+      <label className="setting-row">슬라이드 표시 방식<select value={slideMode} onChange={(event) => saveSlideMode(event.target.value as 'preview' | 'text')}><option value="preview">미리보기</option><option value="text">텍스트</option></select></label>
+      <label className="setting-row">미리보기 해상도<select value={thumbnailQuality} onChange={(event) => saveThumbnailQuality(event.target.value)}>{['64', '128', '256', '512'].map((quality) => <option key={quality} value={quality}>{quality}</option>)}</select></label>
+      <p className="intro">현재 슬라이드 추적은 사용자가 스크롤하면 해제되며, 상단 버튼으로 다시 켤 수 있습니다.</p>
+    </AppPanel>}
+  </>;
+}
+
+type Command = { expected: ActiveExpectation; optimistic?: ActiveState };
+function RemoteSlide({ base, label, slide, presentationId, index, preview }: { base: string; label: string; slide?: Slide; presentationId: string | null; index: number; preview: boolean }) { return <section className={`remote-slide ${preview ? 'remote-preview' : 'remote-text'}`}><span className="remote-slide-label">{label}</span>{slide ? preview ? <img src={`${base}/v1/presentation/${encodeURIComponent(presentationId || '')}/thumbnail/${index}?quality=512`} alt={`${label} 슬라이드 미리보기`} /> : <p>{slideText(slide) || '텍스트 없음'}</p> : <p className="remote-empty">표시할 슬라이드가 없습니다.</p>}</section>; }
 
 function RemoteControl({ settings }: { settings: Settings }) {
-  const base = `http://${settings.host}:${settings.port}`; const queryClient = useQueryClient(); const [mode, setMode] = useState<'text' | 'preview' | 'auto'>('auto'); const [optimisticIndex, setOptimisticIndex] = useState<number | null>(null); const [boundaryFrom, setBoundaryFrom] = useState<{ presentationId: string | null; index: number } | null>(null); const [pendingPresentation, setPendingPresentation] = useState<string | null>(null); const boundaryTimer = useRef<number | null>(null); const pendingPresentationTimer = useRef<number | null>(null);
-  const activeQuery = useQuery({ queryKey: ['active-presentation', base], queryFn: () => api(base, '/v1/presentation/active?chunked=false').then(activeUuid), refetchInterval: 250 }); const indexQuery = useQuery({ queryKey: ['active-slide', base], queryFn: () => api(base, '/v1/presentation/slide_index?chunked=false').then(slideIndex), refetchInterval: 250 });
-  const activePlaylistQuery = useQuery({ queryKey: ['remote-active-playlist', base], queryFn: () => api(base, '/v1/playlist/active?chunked=false').then(activePlaylistContext), refetchInterval: 1000 }); const playlistId = activePlaylistQuery.data?.playlistId; const playlistItemsQuery = useQuery({ queryKey: ['remote-playlist-items', base, playlistId], queryFn: () => api(base, `/v1/playlist/${encodeURIComponent(playlistId as string)}?chunked=false`).then(playlistItems), enabled: Boolean(playlistId) });
-  const presentationQuery = useQuery({ queryKey: ['remote-presentation', base, activeQuery.data], queryFn: () => api(base, `/v1/presentation/${encodeURIComponent(activeQuery.data as string)}?chunked=false`).then(flattenSlides), enabled: Boolean(activeQuery.data) }); const nextPresentationId = useMemo(() => { const items = playlistItemsQuery.data || []; const currentPosition = items.findIndex((item) => presentationUuid(item) === activeQuery.data || objectId(item) === activePlaylistQuery.data?.itemId); const nextItem = currentPosition < 0 ? undefined : items.slice(currentPosition + 1).find((item) => item.type === 'presentation'); return nextItem ? presentationUuid(nextItem) : null; }, [activePlaylistQuery.data?.itemId, activeQuery.data, playlistItemsQuery.data]); const nextPresentationQuery = useQuery({ queryKey: ['remote-next-presentation', base, nextPresentationId], queryFn: () => api(base, `/v1/presentation/${encodeURIComponent(nextPresentationId as string)}?chunked=false`).then(flattenSlides), enabled: Boolean(nextPresentationId) }); const refreshRemoteState = () => { void queryClient.invalidateQueries({ queryKey: ['active-presentation', base] }); void queryClient.invalidateQueries({ queryKey: ['active-slide', base] }); void queryClient.invalidateQueries({ queryKey: ['remote-active-playlist', base] }); }; const relativeTrigger = useMutation({ mutationFn: (next: boolean) => api(base, next ? '/v1/trigger/next' : '/v1/trigger/previous'), onSuccess: () => { refreshRemoteState(); window.setTimeout(refreshRemoteState, 120); window.setTimeout(refreshRemoteState, 300); window.setTimeout(() => setOptimisticIndex(null), 700); }, onError: () => { setOptimisticIndex(null); setPendingPresentation(null); } });
-  const actualIndex = indexQuery.data ?? -1; const slides = presentationQuery.data || []; const activeIndex = optimisticIndex ?? actualIndex; const displayedPresentationId = pendingPresentation || activeQuery.data; const displayedSlides = pendingPresentation ? nextPresentationQuery.data || [] : slides; const displayedIndex = pendingPresentation ? 0 : activeIndex; const currentSlide = displayedIndex >= 0 ? displayedSlides[displayedIndex] : undefined; const nextIsInCurrentPresentation = displayedIndex + 1 < displayedSlides.length; const nextSlide = nextIsInCurrentPresentation ? displayedSlides[displayedIndex + 1] : pendingPresentation ? undefined : nextPresentationQuery.data?.[0]; const nextSlidePresentationId = nextIsInCurrentPresentation ? displayedPresentationId : nextPresentationId; const nextSlideIndex = nextIsInCurrentPresentation ? displayedIndex + 1 : 0; const displayMode = mode === 'auto' ? slideText(currentSlide) ? 'text' : 'preview' : mode; const groups = useMemo(() => displayedSlides.reduce<{ key: string; name: string; index: number }[]>((result, slide, index) => result.some((group) => group.key === slide.groupKey) ? result : [...result, { key: slide.groupKey, name: slide.groupName || `그룹 ${result.length + 1}`, index }], []), [displayedSlides]);
-  useEffect(() => { if (optimisticIndex !== null && actualIndex === optimisticIndex) setOptimisticIndex(null); }, [actualIndex, optimisticIndex]);
-  useEffect(() => { if (boundaryFrom && (boundaryFrom.presentationId !== activeQuery.data || boundaryFrom.index !== actualIndex)) setBoundaryFrom(null); }, [activeQuery.data, actualIndex, boundaryFrom]);
-  useEffect(() => { if (pendingPresentation && activeQuery.data === pendingPresentation && actualIndex >= 0 && actualIndex < (nextPresentationQuery.data || []).length) setPendingPresentation(null); }, [activeQuery.data, actualIndex, nextPresentationQuery.data, pendingPresentation]);
-  useEffect(() => () => { if (boundaryTimer.current !== null) window.clearTimeout(boundaryTimer.current); if (pendingPresentationTimer.current !== null) window.clearTimeout(pendingPresentationTimer.current); }, []);
-  const moveRelative = (next: boolean) => { const targetIndex = actualIndex + (next ? 1 : -1); const crossesPresentation = targetIndex < 0 || targetIndex >= slides.length; if (crossesPresentation) { setBoundaryFrom({ presentationId: activeQuery.data || null, index: actualIndex }); if (boundaryTimer.current !== null) window.clearTimeout(boundaryTimer.current); boundaryTimer.current = window.setTimeout(() => setBoundaryFrom(null), 700); if (next && nextPresentationId) { setPendingPresentation(nextPresentationId); if (pendingPresentationTimer.current !== null) window.clearTimeout(pendingPresentationTimer.current); pendingPresentationTimer.current = window.setTimeout(() => setPendingPresentation(null), 1500); } } else if (targetIndex >= 0) setOptimisticIndex(targetIndex); relativeTrigger.mutate(next); };
-  const controlsDisabled = relativeTrigger.isPending || Boolean(boundaryFrom) || Boolean(pendingPresentation); const groupTrigger = useMutation({ mutationFn: (index: number) => api(base, `/v1/presentation/${encodeURIComponent(displayedPresentationId as string)}/${index}/trigger`), onSuccess: refreshRemoteState });
-  return <main className="remote-app"><section className="remote-screen"><header className="remote-header"><button className="remote-back" onClick={() => window.location.assign('/')}>컨트롤러</button><div className="remote-mode-switch" role="group" aria-label="리모컨 화면 모드"><button className={mode === 'text' ? 'active' : ''} onClick={() => setMode('text')} aria-pressed={mode === 'text'}>텍스트</button><button className={mode === 'preview' ? 'active' : ''} onClick={() => setMode('preview')} aria-pressed={mode === 'preview'}>미리보기</button><button className={mode === 'auto' ? 'active' : ''} onClick={() => setMode('auto')} aria-pressed={mode === 'auto'}>자동</button></div><span className="remote-status"><span className="status-dot" />연결됨</span></header><div className={`remote-slides ${displayMode !== 'text' ? 'single' : ''}`}>{presentationQuery.isLoading || (pendingPresentation && nextPresentationQuery.isLoading) ? <p className="remote-loading">현재 화면을 불러오는 중…</p> : <><RemoteSlide base={base} label="현재" slide={currentSlide} presentationId={displayedPresentationId} index={displayedIndex} mode={displayMode} />{displayMode === 'text' && <RemoteSlide base={base} label="다음" slide={nextSlide} presentationId={nextSlidePresentationId} index={nextSlideIndex} mode="text" />}</>}</div></section><section className="remote-control-area"><section className="remote-controls" aria-label="슬라이드 이동"><button className="remote-control previous" onClick={() => moveRelative(false)} disabled={controlsDisabled} aria-label="이전 슬라이드">‹<span>이전</span></button><button className="remote-control next" onClick={() => moveRelative(true)} disabled={controlsDisabled} aria-label="다음 슬라이드"><span>다음</span>›</button></section><nav className="remote-group-strip" aria-label="프레젠테이션 그룹">{groups.map((group) => <button key={group.key} className={displayedIndex >= group.index && displayedIndex < (groups.find((candidate) => candidate.index > group.index)?.index ?? displayedSlides.length) ? 'active' : ''} onClick={() => groupTrigger.mutate(group.index)} disabled={controlsDisabled || groupTrigger.isPending || !displayedPresentationId}>{group.name}</button>)}</nav></section></main>;
+  const base = `http://${settings.host}:${settings.port}`; const queryClient = useQueryClient(); const activeQuery = useActiveState(base); const active = activeQuery.data; const [mode, setMode] = useState<RemoteMode>('auto'); const [command, setCommand] = useState<Command | null>(null); const [error, setError] = useState(''); const commandTimeout = useRef<number | null>(null);
+  const playlistItemsQuery = useQuery({ queryKey: ['remote-playlist', base, active?.playlistId], queryFn: ({ signal }) => api(base, `/v1/playlist/${encodeURIComponent(active?.playlistId as string)}?chunked=false`, signal).then(playlistItems), enabled: Boolean(active?.playlistId), retry: 1 }); const currentSlidesQuery = useQuery({ queryKey: ['remote-presentation', base, active?.presentationId], queryFn: ({ signal }) => api(base, `/v1/presentation/${encodeURIComponent(active?.presentationId as string)}?chunked=false`, signal).then(flattenSlides), enabled: Boolean(active?.presentationId), retry: 1 });
+  const items = playlistItemsQuery.data || []; const currentPosition = items.findIndex((item) => presentationUuid(item) === active?.presentationId || objectId(item) === active?.playlistItemId); const adjacent = (direction: 1 | -1) => (direction > 0 ? items.slice(currentPosition + 1) : items.slice(0, currentPosition).reverse()).find((item) => item.type === 'presentation'); const nextId = presentationUuid(adjacent(1)); const previousId = presentationUuid(adjacent(-1));
+  const nextSlidesQuery = useQuery({ queryKey: ['remote-adjacent-presentation', base, nextId], queryFn: ({ signal }) => api(base, `/v1/presentation/${encodeURIComponent(nextId as string)}?chunked=false`, signal).then(flattenSlides), enabled: Boolean(nextId), retry: 1 }); const previousSlidesQuery = useQuery({ queryKey: ['remote-adjacent-presentation', base, previousId], queryFn: ({ signal }) => api(base, `/v1/presentation/${encodeURIComponent(previousId as string)}?chunked=false`, signal).then(flattenSlides), enabled: Boolean(previousId), retry: 1 });
+  const slides = currentSlidesQuery.data || []; const view = command?.optimistic || active; const viewIndex = view?.slideIndex ?? -1; const currentSlide = viewIndex >= 0 ? slides[viewIndex] : undefined; const effectiveMode = remoteDisplayMode(mode, currentSlide); const nextInCurrent = viewIndex + 1 < slides.length; const nextSlide = nextInCurrent ? slides[viewIndex + 1] : nextSlidesQuery.data?.[0]; const nextSlideId = nextInCurrent ? active?.presentationId || null : nextId; const groups = useMemo(() => groupStarts(slides), [slides]);
+  const refresh = () => queryClient.refetchQueries({ queryKey: ['active-state', base], type: 'active' });
+  const run = async (path: string, nextCommand: Command) => { if (command) return; setError(''); setCommand(nextCommand); if (commandTimeout.current !== null) window.clearTimeout(commandTimeout.current); commandTimeout.current = window.setTimeout(() => { setCommand(null); setError('ProPresenter 상태 확인 시간이 초과되었습니다. 다시 시도하세요.'); }, 1_800); try { await api(base, path); await refresh(); } catch (reason) { setCommand(null); setError((reason as Error).message || '슬라이드를 실행할 수 없습니다.'); } };
+  useEffect(() => { if (command && active && isConfirmed(command.expected, active)) { if (commandTimeout.current !== null) window.clearTimeout(commandTimeout.current); setCommand(null); } }, [active, command]); useEffect(() => () => { if (commandTimeout.current !== null) window.clearTimeout(commandTimeout.current); }, []);
+  const relative = (direction: 1 | -1) => { if (!active || !slides.length || command) return; const target = relativeTarget(active, slides, direction, direction > 0 ? nextId : previousId, direction > 0 ? nextSlidesQuery.data : previousSlidesQuery.data); if (!target) return setError('이동할 프레젠테이션이 없습니다.'); void run(direction > 0 ? '/v1/trigger/next' : '/v1/trigger/previous', { expected: target, optimistic: target.optimistic ? { ...active, slideIndex: target.slideIndex } : undefined }); };
+  const jumpGroup = (index: number) => { if (!active?.presentationId || command) return; void run(`/v1/presentation/${encodeURIComponent(active.presentationId)}/${index}/trigger`, { expected: { presentationId: active.presentationId, slideIndex: index }, optimistic: { ...active, slideIndex: index } }); };
+  const groupActive = (groupIndex: number) => viewIndex >= groupIndex && viewIndex < (groups.find((group) => group.index > groupIndex)?.index ?? slides.length);
+  return <main className="remote-app"><section className="remote-screen"><header className="remote-header"><button className="remote-back" onClick={() => window.location.assign('/')}>컨트롤러</button><div className="remote-mode-switch" role="group" aria-label="리모컨 화면 모드">{(['text', 'preview', 'auto'] as RemoteMode[]).map((value) => <button key={value} className={mode === value ? 'active' : ''} onClick={() => setMode(value)} aria-pressed={mode === value}>{value === 'text' ? '텍스트' : value === 'preview' ? '미리보기' : '자동'}</button>)}</div><span className="remote-status"><span className="status-dot" />{active ? '연결됨' : '확인 중'}</span></header>{error && <p className="remote-command-error">{error}</p>}<div className={`remote-slides ${effectiveMode === 'preview' ? 'single' : ''}`}>{currentSlidesQuery.isLoading ? <p className="remote-loading">현재 화면을 불러오는 중…</p> : <><RemoteSlide base={base} label="현재" slide={currentSlide} presentationId={active?.presentationId || null} index={viewIndex} preview={effectiveMode === 'preview'} />{effectiveMode === 'text' && <RemoteSlide base={base} label="다음" slide={nextSlide} presentationId={nextSlideId} index={nextInCurrent ? viewIndex + 1 : 0} preview={false} />}</>}</div></section><section className="remote-control-area"><section className="remote-controls"><button className="remote-control previous" onClick={() => relative(-1)} disabled={Boolean(command)} aria-label="이전 슬라이드">‹<span>이전</span></button><button className="remote-control next" onClick={() => relative(1)} disabled={Boolean(command)} aria-label="다음 슬라이드"><span>다음</span>›</button></section><nav className="remote-group-strip" aria-label="프레젠테이션 그룹">{groups.map((group) => <button key={group.key} className={groupActive(group.index) ? 'active' : ''} disabled={Boolean(command)} onClick={() => jumpGroup(group.index)}>{group.name}</button>)}</nav></section></main>;
 }
 
-function TopNav({ settings, onConnectionSettings, onAppSettings }: { settings: Settings; onConnectionSettings: () => void; onAppSettings: () => void }) { const [location, setLocation] = useState({ playlistName: '재생목록', presentationName: '' }); const [followActive, setFollowActive] = useState(true); useEffect(() => { const updateLocation = (event: Event) => setLocation((event as CustomEvent<{ playlistName: string; presentationName: string }>).detail); const updateFollow = (event: Event) => setFollowActive((event as CustomEvent<boolean>).detail); window.addEventListener('active-location-change', updateLocation); window.addEventListener('follow-mode-change', updateFollow); return () => { window.removeEventListener('active-location-change', updateLocation); window.removeEventListener('follow-mode-change', updateFollow); }; }, []); const toggleFollow = () => (document.querySelector('.workspace .follow-button') as HTMLButtonElement | null)?.click(); return <nav className="top-nav"><strong>ProPresenter Remote</strong><span className="top-playlist">{location.playlistName}{location.presentationName && ` / ${location.presentationName}`}</span><div className="top-actions"><span className="top-live-badge"><span className="status-dot" />{settings.host}:{settings.port} · 연결됨</span><button className="top-follow-button" disabled={followActive} onClick={toggleFollow} aria-disabled={followActive}>{followActive ? '현재 슬라이드 추적 중' : '현재 슬라이드 따라가기'}</button><button onClick={() => window.location.assign('/remote')}>리모컨</button><button onClick={onAppSettings}>앱 설정</button><button onClick={onConnectionSettings}>연결 정보</button></div></nav>; }
-function App() { const [supported, setSupported] = useState<boolean | null>(null); const [settings, setSettings] = useState<Settings | null>(() => JSON.parse(localStorage.getItem(settingsKey) || 'null') as Settings | null); const [showConnectionSettings, setShowConnectionSettings] = useState(false); useEffect(() => { let mounted = true; const check = async () => { if (!window.isSecureContext || !navigator.permissions?.query) return mounted && setSupported(false); try { await navigator.permissions.query({ name: 'local-network' as PermissionName }); if (mounted) setSupported(true); } catch { if (mounted) setSupported(false); } }; check(); return () => { mounted = false; }; }, []); const connect = (next: Settings) => { localStorage.setItem(settingsKey, JSON.stringify(next)); setSettings(next); setShowConnectionSettings(false); }; const openAppSettings = () => (document.querySelector('.sidebar-header .icon-button') as HTMLButtonElement | null)?.click(); if (supported === false) return <BrowserSupportNotice />; if (supported === null) return null; if (!settings) return <Setup onConnect={connect} />; if (window.location.pathname === '/remote') return <RemoteControl settings={settings} />; return <><TopNav settings={settings} onAppSettings={openAppSettings} onConnectionSettings={() => setShowConnectionSettings(true)} /><Control settings={settings} onSettings={() => setShowConnectionSettings(true)} />{showConnectionSettings && <ConnectionSettingsPanel settings={settings} onConnect={connect} onClose={() => setShowConnectionSettings(false)} />}</>; }
-createRoot(document.getElementById('root')!).render(<QueryClientProvider client={new QueryClient()}><App /></QueryClientProvider>);
+function App() {
+  const [supported, setSupported] = useState<boolean | null>(null); const [settings, setSettings] = useState<Settings | null>(() => JSON.parse(localStorage.getItem(settingsKey) || 'null') as Settings | null); const [showConnection, setShowConnection] = useState(false);
+  useEffect(() => { let mounted = true; const check = async () => { if (!window.isSecureContext || !navigator.permissions?.query) return mounted && setSupported(false); try { await navigator.permissions.query({ name: 'local-network' as PermissionName }); if (mounted) setSupported(true); } catch { if (mounted) setSupported(false); } }; void check(); return () => { mounted = false; }; }, []);
+  const connect = (next: Settings) => { localStorage.setItem(settingsKey, JSON.stringify(next)); setSettings(next); setShowConnection(false); };
+  if (supported === false) return <BrowserSupportNotice />; if (supported === null) return null; if (!settings) return <Setup onConnect={connect} />; if (window.location.pathname === '/remote') return <RemoteControl settings={settings} />;
+  return <><Controller settings={settings} onConnection={() => setShowConnection(true)} />{showConnection && <ConnectionSettingsPanel settings={settings} onConnect={connect} onClose={() => setShowConnection(false)} />}</>;
+}
+
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 250, refetchOnWindowFocus: false } } });
+createRoot(document.getElementById('root')!).render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
