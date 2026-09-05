@@ -68,6 +68,7 @@ input { width: 100%; border: 1px solid #46557a; border-radius: 10px; padding: 14
 .remote-mode-switch button { flex:1; padding:6px 8px; border:0; border-radius:6px; color:#8996b0; white-space:nowrap; }
 .remote-mode-switch button.active { background:#344b84; color:#fff; }
 .remote-slides { min-height:0; flex:1; display:grid; grid-template-rows:1fr 1fr; }
+.remote-slides.single { grid-template-rows:1fr; }
 .remote-slide { position:relative; min-height:0; display:grid; place-items:center; overflow:hidden; padding:28px 18px 16px; text-align:center; }
 .remote-slide + .remote-slide { border-top:1px solid #2a3550; }
 .remote-slide-label { position:absolute; top:9px; left:12px; color:#90a8ff; font-size:.66rem; font-weight:750; letter-spacing:.12em; }
