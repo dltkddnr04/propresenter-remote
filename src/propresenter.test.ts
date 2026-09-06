@@ -69,7 +69,12 @@ describe('display and group rules', () => {
     const focused = { ...active, presentationId: 'presentation-focused' };
     expect(activePlaylistPresentationId(focused, items)).toBe('presentation-live');
     expect(outputSlideIndex(focused, 'presentation-live', slides)).toBe(1);
-    expect(outputSlideIndex(focused, 'presentation-focused', flattenSlides({ presentation: { groups: [{ slides: [{ uuid: 'another-slide' }] }] } }))).toBe(-1);
+    expect(outputSlideIndex(focused, 'presentation-focused', flattenSlides({ presentation: { groups: [{ slides: [{ uuid: 'another-slide' }, { uuid: 'second-slide' }] }] } }))).toBe(1);
+  });
+
+  it('falls back to the active presentation index when detail slides do not expose UUIDs', () => {
+    const uuidlessSlides = flattenSlides({ presentation: { groups: [{ slides: [{ text: '첫 슬라이드' }, { text: '현재 슬라이드' }] }] } });
+    expect(outputSlideIndex({ ...active, currentSlideUuid: 'output-only-slide', slideIndex: 1 }, 'presentation-a', uuidlessSlides)).toBe(1);
   });
 
   it('normalizes ProPresenter group colors for card metadata', () => {

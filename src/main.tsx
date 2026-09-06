@@ -156,10 +156,10 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
   const [slideMode, setSlideMode] = useState<'preview' | 'text'>(() => localStorage.getItem('propresenter-remote:slide-mode') === 'text' ? 'text' : 'preview');
   const [thumbnailQuality, setThumbnailQuality] = useState(() => localStorage.getItem('propresenter-remote:thumbnail-quality') || '256');
   const [renderVersion, setRenderVersion] = useState(0);
+  const [followRequest, setFollowRequest] = useState(0);
   const workspaceRef = useRef<HTMLElement>(null);
-  const followedPresentationRef = useRef<string | null>(null);
   const markRendered = useCallback(() => setRenderVersion((value) => value + 1), []);
-  const disableFollowing = () => { followedPresentationRef.current = null; setFollowing(false); };
+  const disableFollowing = () => setFollowing(false);
 
   const playlistsQuery = useQuery({ queryKey: ['playlists', base], queryFn: ({ signal }) => api(base, '/v1/playlists?chunked=false', signal).then(flattenPlaylists), retry: 1 });
   const playlists = playlistsQuery.data || [];
@@ -211,15 +211,13 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
     const candidates = workspace ? Array.from(workspace.querySelectorAll<HTMLButtonElement>('.slide-card')) : [];
     const presentationCards = candidates.filter((card) => card.dataset.presentationUuid === outputActive.presentationId);
     const target = (outputActive.currentSlideUuid ? candidates.find((card) => card.dataset.slideUuid === outputActive.currentSlideUuid) : undefined)
+      || candidates.find((card) => card.classList.contains('active'))
       || presentationCards.find((card) => Number(card.dataset.slideIndex) === outputActive.slideIndex);
     if (!workspace || !target) return;
     const box = workspace.getBoundingClientRect();
     const slide = target.getBoundingClientRect();
-    const presentationId = target.dataset.presentationUuid || outputActive.presentationId;
-    const presentationChanged = followedPresentationRef.current !== presentationId;
-    workspace.scrollTo({ top: Math.max(0, workspace.scrollTop + slide.top - box.top - (workspace.clientHeight / 3 - slide.height / 2)), behavior: presentationChanged ? 'auto' : 'smooth' });
-    followedPresentationRef.current = presentationId;
-  }, [outputActive?.presentationId, outputActive?.slideIndex, outputActive?.currentSlideUuid, following, renderVersion]);
+    workspace.scrollTo({ top: Math.max(0, workspace.scrollTop + slide.top - box.top - (workspace.clientHeight / 3 - slide.height / 2)), behavior: 'smooth' });
+  }, [outputActive?.presentationId, outputActive?.slideIndex, outputActive?.currentSlideUuid, following, followRequest, renderVersion]);
 
   const activeItem = (itemsQuery.data || []).find((item) => presentationUuid(item) === outputActive?.presentationId);
   const title = source === 'library'
@@ -249,7 +247,7 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
   };
 
   return <>
-    <TopNav settings={settings} active={active} title={title} following={following} onFollow={() => setFollowing(true)} onSettings={() => setShowSettings(true)} onConnection={onConnection} />
+    <TopNav settings={settings} active={active} title={title} following={following} onFollow={() => { setFollowing(true); setFollowRequest((value) => value + 1); }} onSettings={() => setShowSettings(true)} onConnection={onConnection} />
     <main className="control-app">
       <aside className="sidebar">
         <SidebarBrowser base={base} source={source} active={active} playlists={playlists} selectedPlaylist={selectedPlaylist} playlistItems={itemsQuery.data || []} playlistLoading={itemsQuery.isLoading} playlistError={itemsQuery.error as Error | null} onSourceChange={(nextSource) => { disableFollowing(); setSource(nextSource); }} onPlaylistSelect={choosePlaylist} onLibraryPresentation={chooseLibraryPresentation} onPresentationSelect={focusPresentation} />

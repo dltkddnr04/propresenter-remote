@@ -194,7 +194,10 @@ export function activeSlideIndex(active: ActiveState | undefined, slides: Slide[
 
 export function outputSlideIndex(active: ActiveState | undefined, presentationId: string | null, slides: Slide[]): number {
   if (!active) return -1;
-  if (active.currentSlideUuid) return slides.findIndex((slide) => slideUuid(slide) === active.currentSlideUuid);
+  if (active.currentSlideUuid) {
+    const uuidIndex = slides.findIndex((slide) => slideUuid(slide) === active.currentSlideUuid);
+    if (uuidIndex >= 0) return uuidIndex;
+  }
   return active.presentationId === presentationId ? active.slideIndex : -1;
 }
 
