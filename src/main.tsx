@@ -157,6 +157,7 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
   const [thumbnailQuality, setThumbnailQuality] = useState(() => localStorage.getItem('propresenter-remote:thumbnail-quality') || '256');
   const [renderVersion, setRenderVersion] = useState(0);
   const workspaceRef = useRef<HTMLElement>(null);
+  const followedPresentationRef = useRef<string | null>(null);
   const markRendered = useCallback(() => setRenderVersion((value) => value + 1), []);
 
   const playlistsQuery = useQuery({ queryKey: ['playlists', base], queryFn: ({ signal }) => api(base, '/v1/playlists?chunked=false', signal).then(flattenPlaylists), retry: 1 });
@@ -211,7 +212,9 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
     if (!workspace || !target) return;
     const box = workspace.getBoundingClientRect();
     const slide = target.getBoundingClientRect();
-    workspace.scrollTo({ top: Math.max(0, workspace.scrollTop + slide.top - box.top - (workspace.clientHeight / 3 - slide.height / 2)), behavior: 'smooth' });
+    const presentationChanged = followedPresentationRef.current !== active.presentationId;
+    workspace.scrollTo({ top: Math.max(0, workspace.scrollTop + slide.top - box.top - (workspace.clientHeight / 3 - slide.height / 2)), behavior: presentationChanged ? 'auto' : 'smooth' });
+    followedPresentationRef.current = active.presentationId;
   }, [active?.presentationId, active?.slideIndex, active?.currentSlideUuid, following, renderVersion]);
 
   const activeItem = (itemsQuery.data || []).find((item) => presentationUuid(item) === active?.presentationId);
