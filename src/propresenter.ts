@@ -1,10 +1,25 @@
 export type ApiObject = Record<string, any>;
 
+export type ConnectionSettings = { host: string; port: number };
+
+export function isNativeProxy(): boolean {
+  if (typeof document === 'undefined') return false;
+  return document.cookie.split(';').some((part) => {
+    const [name, ...value] = part.trim().split('=');
+    return name === 'propresenter-native' && value.join('=') === '1';
+  });
+}
+
+export function apiBase(settings: ConnectionSettings): string {
+  return isNativeProxy() ? '' : `http://${settings.host}:${settings.port}`;
+}
+
 export type ActiveState = {
   playlistId: string | null;
   playlistItemId: string | null;
   presentationId: string | null;
   slideIndex: number;
+  currentSlideUuid: string | null;
 };
 
 export type ActiveExpectation = {
@@ -101,13 +116,25 @@ export function slideIndex(data: unknown): number {
   return -1;
 }
 
+export function slideUuid(value?: ApiObject): string | null {
+  if (!value) return null;
+  return value.uuid || value.id?.uuid || value.slide?.uuid || value.slide?.id?.uuid || null;
+}
+
+export function currentSlideUuid(data: unknown): string | null {
+  const value = unwrap(data) as ApiObject;
+  const current = value?.current || value?.slide?.current || value?.data?.current;
+  return slideUuid(current);
+}
+
 export async function fetchActiveState(base: string, signal?: AbortSignal): Promise<ActiveState> {
-  const [playlist, presentation, slide] = await Promise.all([
+  const [playlist, presentation, slide, status] = await Promise.all([
     api(base, '/v1/playlist/active?chunked=false', signal),
     api(base, '/v1/presentation/active?chunked=false', signal),
     api(base, '/v1/presentation/slide_index?chunked=false', signal),
+    api(base, '/v1/status/slide?chunked=false', signal),
   ]);
-  return { ...activePlaylistContext(playlist), presentationId: activePresentationId(presentation), slideIndex: slideIndex(slide) };
+  return { ...activePlaylistContext(playlist), presentationId: activePresentationId(presentation), slideIndex: slideIndex(slide), currentSlideUuid: currentSlideUuid(status) };
 }
 
 export function flattenSlides(data: unknown): Slide[] {
@@ -124,6 +151,15 @@ export function flattenSlides(data: unknown): Slide[] {
 
 export function slideText(slide?: Slide): string {
   return String(slide?.text || '').replace(/\s+/g, ' ').trim();
+}
+
+export function activeSlideIndex(active: ActiveState | undefined, slides: Slide[]): number {
+  if (!active) return -1;
+  if (active.currentSlideUuid) {
+    const uuidIndex = slides.findIndex((slide) => slideUuid(slide) === active.currentSlideUuid);
+    if (uuidIndex >= 0) return uuidIndex;
+  }
+  return active.slideIndex;
 }
 
 export function isConfirmed(expected: ActiveExpectation, actual: ActiveState): boolean {

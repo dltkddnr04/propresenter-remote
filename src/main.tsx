@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ActiveExpectation, ActiveState, ApiObject, Slide, api, fetchActiveState, flattenSlides, groupStarts, isConfirmed, listArray, objectId, objectName, playlistItems, presentationUuid, relativeTarget, remoteDisplayMode, slideText, unwrap } from './propresenter';
+import { ActiveExpectation, ActiveState, ApiObject, Slide, activeSlideIndex, api, apiBase, fetchActiveState, flattenSlides, groupStarts, isConfirmed, isNativeProxy, listArray, objectId, objectName, playlistItems, presentationUuid, relativeTarget, remoteDisplayMode, slideText, slideUuid, unwrap } from './propresenter';
 import './styles.css';
 
 const settingsKey = 'propresenter-remote:connection';
@@ -56,7 +56,8 @@ function PresentationBlock({ base, item, active, slideMode, thumbnailQuality, on
   const query = useQuery({ queryKey: ['presentation', base, uuid], queryFn: ({ signal }) => api(base, `/v1/presentation/${encodeURIComponent(uuid as string)}?chunked=false`, signal).then(flattenSlides), enabled: Boolean(uuid) && (near || active?.presentationId === uuid), retry: 1 });
   const slides = query.data || [];
   useEffect(() => { if (slides.length) onReady(); }, [onReady, slides.length]);
-  return <section ref={ref} className="presentation-block"><div className="presentation-heading"><strong>{objectName(item)}</strong><small>{query.isLoading ? '불러오는 중…' : `${slides.length} slides`}</small></div>{query.isLoading && <p className="sidebar-status">슬라이드 조회 중…</p>}{query.error && <p className="form-error">프레젠테이션을 불러올 수 없습니다.</p>}{!query.isLoading && <div className="slide-grid">{slides.map((slide, index) => { const current = active?.presentationId === uuid && active.slideIndex === index; return <button className={`slide-card ${current ? 'active' : ''}`} data-presentation-uuid={uuid || ''} data-slide-index={index} key={`${uuid}-${index}`} onClick={() => uuid && onTrigger(uuid, index)}>{slideMode === 'preview' ? <span className="slide-preview"><img loading="lazy" src={`${base}/v1/presentation/${encodeURIComponent(uuid as string)}/thumbnail/${index}?quality=${thumbnailQuality}`} alt="" /></span> : <span className="slide-preview text-slide">{slideText(slide) || `${index + 1}`}</span>}<span className="slide-meta"><span>{index + 1}</span>{slide.groupName && <span>{slide.groupName}</span>}</span></button>; })}</div>}</section>;
+  const activeIndex = active?.presentationId === uuid ? activeSlideIndex(active, slides) : -1;
+  return <section ref={ref} className="presentation-block"><div className="presentation-heading"><strong>{objectName(item)}</strong><small>{query.isLoading ? '불러오는 중…' : `${slides.length} slides`}</small></div>{query.isLoading && <p className="sidebar-status">슬라이드 조회 중…</p>}{query.error && <p className="form-error">프레젠테이션을 불러올 수 없습니다.</p>}{!query.isLoading && <div className="slide-grid">{slides.map((slide, index) => { const current = activeIndex === index; return <button className={`slide-card ${current ? 'active' : ''}`} data-presentation-uuid={uuid || ''} data-slide-index={index} data-slide-uuid={slideUuid(slide) || ''} key={`${uuid}-${index}`} onClick={() => uuid && onTrigger(uuid, index)}>{slideMode === 'preview' ? <span className="slide-preview"><img loading="lazy" src={`${base}/v1/presentation/${encodeURIComponent(uuid as string)}/thumbnail/${index}?quality=${thumbnailQuality}`} alt="" /></span> : <span className="slide-preview text-slide">{slideText(slide) || `${index + 1}`}</span>}<span className="slide-meta"><span>{index + 1}</span>{slide.groupName && <span>{slide.groupName}</span>}</span></button>; })}</div>}</section>;
 }
 
 function TopNav({ settings, active, title, following, onFollow, onSettings, onConnection }: { settings: Settings; active?: ActiveState; title: string; following: boolean; onFollow: () => void; onSettings: () => void; onConnection: () => void }) { return <nav className="top-nav"><strong>ProPresenter Remote</strong><span className="top-playlist">{title}</span><div className="top-actions"><span className="top-live-badge"><span className="status-dot" />{settings.host}:{settings.port} · {active ? '연결됨' : '연결 확인 중'}</span><button className="top-follow-button" disabled={following} onClick={onFollow}>{following ? '현재 슬라이드 추적 중' : '현재 슬라이드 따라가기'}</button><button onClick={() => window.location.assign('/remote')}>리모컨</button><button onClick={onSettings}>앱 설정</button><button onClick={onConnection}>연결 정보</button></div></nav>; }
@@ -141,7 +142,7 @@ function SidebarBrowser({ base, source, playlists, selectedPlaylist, playlistIte
 }
 
 function Controller({ settings, onConnection }: { settings: Settings; onConnection: () => void }) {
-  const base = `http://${settings.host}:${settings.port}`;
+  const base = apiBase(settings);
   const queryClient = useQueryClient();
   const activeQuery = useActiveState(base);
   const active = activeQuery.data;
@@ -201,12 +202,13 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
   useEffect(() => {
     if (!following || !active?.presentationId || active.slideIndex < 0) return;
     const workspace = workspaceRef.current;
-    const target = workspace?.querySelector<HTMLButtonElement>(`.slide-card[data-presentation-uuid="${active.presentationId}"][data-slide-index="${active.slideIndex}"]`);
+    const candidates = workspace ? Array.from(workspace.querySelectorAll<HTMLButtonElement>('.slide-card')) : [];
+    const target = candidates.find((card) => card.dataset.presentationUuid === active.presentationId && (active.currentSlideUuid ? card.dataset.slideUuid === active.currentSlideUuid : Number(card.dataset.slideIndex) === active.slideIndex));
     if (!workspace || !target) return;
     const box = workspace.getBoundingClientRect();
     const slide = target.getBoundingClientRect();
     workspace.scrollTo({ top: Math.max(0, workspace.scrollTop + slide.top - box.top - (workspace.clientHeight / 3 - slide.height / 2)), behavior: 'smooth' });
-  }, [active?.presentationId, active?.slideIndex, following, renderVersion]);
+  }, [active?.presentationId, active?.slideIndex, active?.currentSlideUuid, following, renderVersion]);
 
   const activeItem = (itemsQuery.data || []).find((item) => presentationUuid(item) === active?.presentationId);
   const title = source === 'library'
@@ -270,11 +272,11 @@ type Command = { expected: ActiveExpectation; optimistic?: ActiveState };
 function RemoteSlide({ base, label, slide, presentationId, index, preview }: { base: string; label: string; slide?: Slide; presentationId: string | null; index: number; preview: boolean }) { return <section className={`remote-slide ${preview ? 'remote-preview' : 'remote-text'}`}><span className="remote-slide-label">{label}</span>{slide ? preview ? <img src={`${base}/v1/presentation/${encodeURIComponent(presentationId || '')}/thumbnail/${index}?quality=512`} alt={`${label} 슬라이드 미리보기`} /> : <p>{slideText(slide) || '텍스트 없음'}</p> : <p className="remote-empty">표시할 슬라이드가 없습니다.</p>}</section>; }
 
 function RemoteControl({ settings }: { settings: Settings }) {
-  const base = `http://${settings.host}:${settings.port}`; const queryClient = useQueryClient(); const activeQuery = useActiveState(base); const active = activeQuery.data; const [mode, setMode] = useState<RemoteMode>('auto'); const [command, setCommand] = useState<Command | null>(null); const [error, setError] = useState(''); const commandTimeout = useRef<number | null>(null);
+  const base = apiBase(settings); const queryClient = useQueryClient(); const activeQuery = useActiveState(base); const active = activeQuery.data; const [mode, setMode] = useState<RemoteMode>('auto'); const [command, setCommand] = useState<Command | null>(null); const [error, setError] = useState(''); const commandTimeout = useRef<number | null>(null);
   const playlistItemsQuery = useQuery({ queryKey: ['remote-playlist', base, active?.playlistId], queryFn: ({ signal }) => api(base, `/v1/playlist/${encodeURIComponent(active?.playlistId as string)}?chunked=false`, signal).then(playlistItems), enabled: Boolean(active?.playlistId), retry: 1 }); const currentSlidesQuery = useQuery({ queryKey: ['remote-presentation', base, active?.presentationId], queryFn: ({ signal }) => api(base, `/v1/presentation/${encodeURIComponent(active?.presentationId as string)}?chunked=false`, signal).then(flattenSlides), enabled: Boolean(active?.presentationId), retry: 1 });
   const items = playlistItemsQuery.data || []; const currentPosition = items.findIndex((item) => presentationUuid(item) === active?.presentationId || objectId(item) === active?.playlistItemId); const adjacent = (direction: 1 | -1) => (direction > 0 ? items.slice(currentPosition + 1) : items.slice(0, currentPosition).reverse()).find((item) => item.type === 'presentation'); const nextId = presentationUuid(adjacent(1)); const previousId = presentationUuid(adjacent(-1));
   const nextSlidesQuery = useQuery({ queryKey: ['remote-adjacent-presentation', base, nextId], queryFn: ({ signal }) => api(base, `/v1/presentation/${encodeURIComponent(nextId as string)}?chunked=false`, signal).then(flattenSlides), enabled: Boolean(nextId), retry: 1 }); const previousSlidesQuery = useQuery({ queryKey: ['remote-adjacent-presentation', base, previousId], queryFn: ({ signal }) => api(base, `/v1/presentation/${encodeURIComponent(previousId as string)}?chunked=false`, signal).then(flattenSlides), enabled: Boolean(previousId), retry: 1 });
-  const slides = currentSlidesQuery.data || []; const view = command?.optimistic || active; const viewIndex = view?.slideIndex ?? -1; const currentSlide = viewIndex >= 0 ? slides[viewIndex] : undefined; const effectiveMode = remoteDisplayMode(mode, currentSlide); const nextInCurrent = viewIndex + 1 < slides.length; const nextSlide = nextInCurrent ? slides[viewIndex + 1] : nextSlidesQuery.data?.[0]; const nextSlideId = nextInCurrent ? active?.presentationId || null : nextId; const groups = useMemo(() => groupStarts(slides), [slides]);
+  const slides = currentSlidesQuery.data || []; const view = command?.optimistic || active; const viewIndex = command?.optimistic ? command.optimistic.slideIndex : activeSlideIndex(active, slides); const currentSlide = viewIndex >= 0 ? slides[viewIndex] : undefined; const effectiveMode = remoteDisplayMode(mode, currentSlide); const nextInCurrent = viewIndex + 1 < slides.length; const nextSlide = nextInCurrent ? slides[viewIndex + 1] : nextSlidesQuery.data?.[0]; const nextSlideId = nextInCurrent ? active?.presentationId || null : nextId; const groups = useMemo(() => groupStarts(slides), [slides]);
   const refresh = () => queryClient.refetchQueries({ queryKey: ['active-state', base], type: 'active' });
   const run = async (path: string, nextCommand: Command) => { if (command) return; setError(''); setCommand(nextCommand); if (commandTimeout.current !== null) window.clearTimeout(commandTimeout.current); commandTimeout.current = window.setTimeout(() => { setCommand(null); setError('ProPresenter 상태 확인 시간이 초과되었습니다. 다시 시도하세요.'); }, 1_800); try { await api(base, path); await refresh(); } catch (reason) { setCommand(null); setError((reason as Error).message || '슬라이드를 실행할 수 없습니다.'); } };
   useEffect(() => { if (command && active && isConfirmed(command.expected, active)) { if (commandTimeout.current !== null) window.clearTimeout(commandTimeout.current); setCommand(null); } }, [active, command]); useEffect(() => () => { if (commandTimeout.current !== null) window.clearTimeout(commandTimeout.current); }, []);
@@ -285,9 +287,10 @@ function RemoteControl({ settings }: { settings: Settings }) {
 }
 
 function App() {
-  const [supported, setSupported] = useState<boolean | null>(null); const [settings, setSettings] = useState<Settings | null>(() => JSON.parse(localStorage.getItem(settingsKey) || 'null') as Settings | null); const [showConnection, setShowConnection] = useState(false);
-  useEffect(() => { let mounted = true; const check = async () => { if (!window.isSecureContext || !navigator.permissions?.query) return mounted && setSupported(false); try { await navigator.permissions.query({ name: 'local-network' as PermissionName }); if (mounted) setSupported(true); } catch { if (mounted) setSupported(false); } }; void check(); return () => { mounted = false; }; }, []);
-  const connect = (next: Settings) => { localStorage.setItem(settingsKey, JSON.stringify(next)); setSettings(next); setShowConnection(false); };
+  const nativeProxy = isNativeProxy(); const nativeSettings: Settings = { host: '127.0.0.1', port: 1025 };
+  const [supported, setSupported] = useState<boolean | null>(null); const [settings, setSettings] = useState<Settings | null>(() => nativeProxy ? nativeSettings : JSON.parse(localStorage.getItem(settingsKey) || 'null') as Settings | null); const [showConnection, setShowConnection] = useState(false);
+  useEffect(() => { let mounted = true; const check = async () => { if (nativeProxy) return mounted && setSupported(true); if (!window.isSecureContext || !navigator.permissions?.query) return mounted && setSupported(false); try { await navigator.permissions.query({ name: 'local-network' as PermissionName }); if (mounted) setSupported(true); } catch { if (mounted) setSupported(false); } }; void check(); return () => { mounted = false; }; }, [nativeProxy]);
+  const connect = (next: Settings) => { const resolved = nativeProxy ? nativeSettings : next; if (!nativeProxy) localStorage.setItem(settingsKey, JSON.stringify(resolved)); setSettings(resolved); setShowConnection(false); };
   if (supported === false) return <BrowserSupportNotice />; if (supported === null) return null; if (!settings) return <Setup onConnect={connect} />; if (window.location.pathname === '/remote') return <RemoteControl settings={settings} />;
   return <><Controller settings={settings} onConnection={() => setShowConnection(true)} />{showConnection && <ConnectionSettingsPanel settings={settings} onConnect={connect} onClose={() => setShowConnection(false)} />}</>;
 }

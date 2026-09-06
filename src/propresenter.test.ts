@@ -1,21 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ActiveState, fetchActiveState, flattenSlides, groupStarts, isConfirmed, listArray, relativeTarget, remoteDisplayMode, unwrap } from './propresenter';
+import { ActiveState, activeSlideIndex, fetchActiveState, flattenSlides, groupStarts, isConfirmed, listArray, relativeTarget, remoteDisplayMode, slideUuid, unwrap } from './propresenter';
 
-const active: ActiveState = { playlistId: 'playlist-a', playlistItemId: 'item-a', presentationId: 'presentation-a', slideIndex: 1 };
-const slides = flattenSlides({ presentation: { groups: [{ uuid: 'verse', name: '1절', slides: [{ text: '첫 줄' }, { text: '둘째 줄' }] }, { uuid: 'chorus', name: '후렴', slides: [{ text: '' }] }] } });
+const active: ActiveState = { playlistId: 'playlist-a', playlistItemId: 'item-a', presentationId: 'presentation-a', slideIndex: 1, currentSlideUuid: 'slide-b' };
+const slides = flattenSlides({ presentation: { groups: [{ uuid: 'verse', name: '1절', slides: [{ uuid: 'slide-a', text: '첫 줄' }, { uuid: 'slide-b', text: '둘째 줄' }] }, { uuid: 'chorus', name: '후렴', slides: [{ uuid: 'slide-c', text: '' }] }] } });
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('active state snapshot', () => {
-  it('combines the three active API responses into one snapshot', async () => {
+  it('combines active APIs and the actual output slide into one snapshot', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
-      const body = path.includes('/playlist/active') ? { presentation: { playlist: { uuid: 'playlist-a' }, item: { uuid: 'item-a' } } } : path.includes('/presentation/active') ? { presentation: { item: { uuid: 'presentation-a' } } } : { slide_index: 1 };
+      const body = path.includes('/playlist/active') ? { presentation: { playlist: { uuid: 'playlist-a' }, item: { uuid: 'item-a' } } } : path.includes('/presentation/active') ? { presentation: { item: { uuid: 'presentation-a' } } } : path.includes('/status/slide') ? { current: { uuid: 'slide-b' } } : { slide_index: 1 };
       return new Response(JSON.stringify(body), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
     await expect(fetchActiveState('http://propresenter.local')).resolves.toEqual(active);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('does not confirm a stale or mixed state', () => {
@@ -46,6 +46,10 @@ describe('remote transitions', () => {
 });
 
 describe('display and group rules', () => {
+  it('prefers the actual output slide UUID over a stale index', () => {
+    expect(slideUuid({ id: { uuid: 'slide-b' } })).toBe('slide-b');
+    expect(activeSlideIndex({ ...active, slideIndex: 0 }, slides)).toBe(1);
+  });
   it('uses text mode only when the current automatic slide has text', () => {
     expect(remoteDisplayMode('auto', slides[0])).toBe('text');
     expect(remoteDisplayMode('auto', slides[2])).toBe('preview');
