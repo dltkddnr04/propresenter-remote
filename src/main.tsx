@@ -202,7 +202,7 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
   }, [relativeTrigger]);
 
   useEffect(() => {
-    if (!following || !active?.presentationId || active.slideIndex < 0) return;
+    if (!following || !active?.presentationId || (active.slideIndex < 0 && !active.currentSlideUuid)) return;
     const workspace = workspaceRef.current;
     const candidates = workspace ? Array.from(workspace.querySelectorAll<HTMLButtonElement>('.slide-card')) : [];
     const target = candidates.find((card) => card.dataset.presentationUuid === active.presentationId && (active.currentSlideUuid ? card.dataset.slideUuid === active.currentSlideUuid : Number(card.dataset.slideIndex) === active.slideIndex));

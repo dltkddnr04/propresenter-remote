@@ -60,6 +60,7 @@ describe('display and group rules', () => {
   it('prefers the actual output slide UUID over a stale index', () => {
     expect(slideUuid({ id: { uuid: 'slide-b' } })).toBe('slide-b');
     expect(activeSlideIndex({ ...active, slideIndex: 0 }, slides)).toBe(1);
+    expect(activeSlideIndex({ ...active, slideIndex: -1 }, slides)).toBe(1);
   });
   it('uses text mode only when the current automatic slide has text', () => {
     expect(remoteDisplayMode('auto', slides[0])).toBe('text');
