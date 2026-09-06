@@ -132,8 +132,8 @@ function SidebarBrowser({ base, source, playlists, selectedPlaylist, playlistIte
       <div className="sidebar-item-list">
         {selectedItems.map((item, index) => item.type === 'header'
           ? <span className="sidebar-item-heading" key={`sidebar-header-${index}`}>{objectName(item, '구분')}</span>
-          : item.type === 'presentation' && presentationUuid(item)
-            ? <button className="sidebar-item-button" key={`${presentationUuid(item)}-${index}`} onClick={() => source === 'library' ? onLibraryPresentation(selectedLibraryId as string, item) : onPresentationSelect(presentationUuid(item) as string)}>{objectName(item)}</button>
+          : (source === 'library' ? objectId(item) : item.type === 'presentation' && presentationUuid(item))
+            ? <button className="sidebar-item-button" key={`${source === 'library' ? objectId(item) : presentationUuid(item)}-${index}`} onClick={() => source === 'library' ? onLibraryPresentation(selectedLibraryId as string, item) : onPresentationSelect(presentationUuid(item) as string)}>{objectName(item)}</button>
             : null)}
       </div>
     </section>

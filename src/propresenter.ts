@@ -51,8 +51,12 @@ export function listArray(value: unknown): ApiObject[] {
   if (Array.isArray(value)) return value;
   if (!value || typeof value !== 'object') return [];
   const object = value as ApiObject;
-  for (const key of ['items', 'playlist_items', 'contents', 'children', 'playlists', 'libraries', 'library', 'presentations']) {
+  for (const key of ['data', 'items', 'playlist_items', 'contents', 'children', 'playlists', 'libraries', 'library', 'presentations']) {
     if (Array.isArray(object[key])) return object[key];
+    if (object[key] && typeof object[key] === 'object') {
+      const nested = listArray(object[key]);
+      if (nested.length) return nested;
+    }
   }
   return [];
 }

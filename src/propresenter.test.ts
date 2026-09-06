@@ -62,5 +62,6 @@ describe('wrapped API responses', () => {
     const response = { data: { libraries: [{ id: { uuid: 'library-a', name: '기본 라이브러리' } }] } };
     expect(listArray(unwrap(response))).toEqual(response.data.libraries);
     expect(listArray(unwrap({ data: { presentations: [{ id: { uuid: 'presentation-a' } }] } }))).toHaveLength(1);
+    expect(listArray({ data: { library: { items: [{ id: { uuid: 'presentation-b' } }] } } })).toHaveLength(1);
   });
 });
