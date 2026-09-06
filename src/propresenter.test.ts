@@ -61,6 +61,12 @@ describe('display and group rules', () => {
     expect(slideUuid({ id: { uuid: 'slide-b' } })).toBe('slide-b');
     expect(activeSlideIndex({ ...active, slideIndex: 0 }, slides)).toBe(1);
     expect(activeSlideIndex({ ...active, slideIndex: -1 }, slides)).toBe(1);
+    expect(slides[0].groupColor).toBeNull();
+  });
+
+  it('normalizes ProPresenter group colors for card metadata', () => {
+    const colored = flattenSlides({ presentation: { groups: [{ name: '후렴', groupColor: '0.2 0.6 1 0.5', slides: [{ text: '색상' }] }] } });
+    expect(colored[0].groupColor).toBe('rgba(51, 153, 255, 0.5)');
   });
   it('uses text mode only when the current automatic slide has text', () => {
     expect(remoteDisplayMode('auto', slides[0])).toBe('text');

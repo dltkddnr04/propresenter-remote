@@ -32,6 +32,7 @@ export type ActiveExpectation = {
 export type Slide = ApiObject & {
   groupName: string;
   groupKey: string;
+  groupColor: string | null;
   flatIndex: number;
 };
 
@@ -127,6 +128,28 @@ export function currentSlideUuid(data: unknown): string | null {
   return slideUuid(current);
 }
 
+export function normalizeGroupColor(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const parts = value.trim().split(/[\s,]+/).map(Number);
+    if (parts.length >= 3 && parts.slice(0, 3).every(Number.isFinite)) {
+      const [red, green, blue] = parts;
+      const alpha = Number.isFinite(parts[3]) ? parts[3] : 1;
+      const scale = Math.max(red, green, blue) <= 1 ? 255 : 1;
+      return `rgba(${Math.round(red * scale)}, ${Math.round(green * scale)}, ${Math.round(blue * scale)}, ${Math.max(0, Math.min(1, alpha))})`;
+    }
+    return value.trim() || null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  const color = value as ApiObject;
+  const red = Number(color.red ?? color.r);
+  const green = Number(color.green ?? color.g);
+  const blue = Number(color.blue ?? color.b);
+  if (![red, green, blue].every(Number.isFinite)) return null;
+  const alpha = Number(color.alpha ?? color.a ?? 1);
+  const scale = Math.max(red, green, blue) <= 1 ? 255 : 1;
+  return `rgba(${Math.round(red * scale)}, ${Math.round(green * scale)}, ${Math.round(blue * scale)}, ${Math.max(0, Math.min(1, Number.isFinite(alpha) ? alpha : 1))})`;
+}
+
 export async function fetchActiveState(base: string, signal?: AbortSignal): Promise<ActiveState> {
   const [playlist, presentation, slide, status] = await Promise.all([
     api(base, '/v1/playlist/active?chunked=false', signal),
@@ -144,6 +167,7 @@ export function flattenSlides(data: unknown): Slide[] {
       ...slide,
       groupName: group.name || '',
       groupKey: group.uuid || group.id?.uuid || `group-${groupIndex}`,
+      groupColor: normalizeGroupColor(group.groupColor || group.group_color || group.color),
       flatIndex: 0,
     })),
   ).map((slide: Slide, index: number) => ({ ...slide, flatIndex: index }));
