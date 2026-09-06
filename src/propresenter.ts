@@ -90,6 +90,12 @@ export function presentationUuid(item?: ApiObject): string | null {
   return item?.presentation_info?.presentation_uuid || null;
 }
 
+export function activePlaylistPresentationId(active: ActiveState | undefined, items: ApiObject[]): string | null {
+  if (!active) return null;
+  const activeItem = items.find((item) => objectId(item) === active.playlistItemId);
+  return presentationUuid(activeItem) || active.presentationId;
+}
+
 export function playlistItems(data: unknown): ApiObject[] {
   const object = unwrap(data) as ApiObject;
   return object?.playlist?.items || listArray(object);
@@ -184,6 +190,12 @@ export function activeSlideIndex(active: ActiveState | undefined, slides: Slide[
     if (uuidIndex >= 0) return uuidIndex;
   }
   return active.slideIndex;
+}
+
+export function outputSlideIndex(active: ActiveState | undefined, presentationId: string | null, slides: Slide[]): number {
+  if (!active) return -1;
+  if (active.currentSlideUuid) return slides.findIndex((slide) => slideUuid(slide) === active.currentSlideUuid);
+  return active.presentationId === presentationId ? active.slideIndex : -1;
 }
 
 export function isConfirmed(expected: ActiveExpectation, actual: ActiveState): boolean {

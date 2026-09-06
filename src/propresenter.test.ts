@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ActiveState, activeSlideIndex, fetchActiveState, flattenSlides, groupStarts, isConfirmed, listArray, relativeTarget, remoteDisplayMode, slideUuid, unwrap } from './propresenter';
+import { ActiveState, activePlaylistPresentationId, activeSlideIndex, fetchActiveState, flattenSlides, groupStarts, isConfirmed, listArray, outputSlideIndex, relativeTarget, remoteDisplayMode, slideUuid, unwrap } from './propresenter';
 
 const active: ActiveState = { playlistId: 'playlist-a', playlistItemId: 'item-a', presentationId: 'presentation-a', slideIndex: 1, currentSlideUuid: 'slide-b' };
 const slides = flattenSlides({ presentation: { groups: [{ uuid: 'verse', name: '1절', slides: [{ uuid: 'slide-a', text: '첫 줄' }, { uuid: 'slide-b', text: '둘째 줄' }] }, { uuid: 'chorus', name: '후렴', slides: [{ uuid: 'slide-c', text: '' }] }] } });
@@ -62,6 +62,14 @@ describe('display and group rules', () => {
     expect(activeSlideIndex({ ...active, slideIndex: 0 }, slides)).toBe(1);
     expect(activeSlideIndex({ ...active, slideIndex: -1 }, slides)).toBe(1);
     expect(slides[0].groupColor).toBeNull();
+  });
+
+  it('uses the active playlist item and output UUID when focus points elsewhere', () => {
+    const items = [{ id: { uuid: 'item-a' }, presentation_info: { presentation_uuid: 'presentation-live' } }];
+    const focused = { ...active, presentationId: 'presentation-focused' };
+    expect(activePlaylistPresentationId(focused, items)).toBe('presentation-live');
+    expect(outputSlideIndex(focused, 'presentation-live', slides)).toBe(1);
+    expect(outputSlideIndex(focused, 'presentation-focused', flattenSlides({ presentation: { groups: [{ slides: [{ uuid: 'another-slide' }] }] } }))).toBe(-1);
   });
 
   it('normalizes ProPresenter group colors for card metadata', () => {
