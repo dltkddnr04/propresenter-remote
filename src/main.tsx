@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ActiveExpectation, ActiveState, ApiObject, Slide, api, fetchActiveState, flattenSlides, groupStarts, isConfirmed, listArray, objectId, objectName, playlistItems, presentationUuid, relativeTarget, remoteDisplayMode, slideText } from './propresenter';
+import { ActiveExpectation, ActiveState, ApiObject, Slide, api, fetchActiveState, flattenSlides, groupStarts, isConfirmed, listArray, objectId, objectName, playlistItems, presentationUuid, relativeTarget, remoteDisplayMode, slideText, unwrap } from './propresenter';
 import './styles.css';
 
 const settingsKey = 'propresenter-remote:connection';
@@ -23,7 +23,7 @@ function flattenPlaylists(data: unknown): Playlist[] {
 }
 
 function flattenLibraries(data: unknown): Library[] {
-  return listArray(data).flatMap((item) => { const id = objectId(item); return id ? [{ ...item, id, name: objectName(item, '이름 없는 라이브러리') }] : []; });
+  return listArray(unwrap(data)).flatMap((item) => { const id = objectId(item); return id ? [{ ...item, id, name: objectName(item, '이름 없는 라이브러리') }] : []; });
 }
 
 function useActiveState(base: string) {
@@ -97,7 +97,7 @@ function SidebarBrowser({ base, source, playlists, selectedPlaylist, playlistIte
   const libraries = librariesQuery.data || [];
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
   const selectedLibrary = libraries.find((library) => library.id === selectedLibraryId);
-  const libraryItemsQuery = useQuery({ queryKey: ['library', base, selectedLibraryId], queryFn: ({ signal }) => api(base, `/v1/library/${encodeURIComponent(selectedLibraryId as string)}?chunked=false`, signal).then(listArray), enabled: source === 'library' && Boolean(selectedLibraryId), retry: 1 });
+  const libraryItemsQuery = useQuery({ queryKey: ['library', base, selectedLibraryId], queryFn: ({ signal }) => api(base, `/v1/library/${encodeURIComponent(selectedLibraryId as string)}?chunked=false`, signal).then((data) => listArray(unwrap(data))), enabled: source === 'library' && Boolean(selectedLibraryId), retry: 1 });
   useEffect(() => { if (!selectedLibraryId && libraries.length) setSelectedLibraryId(libraries[0].id); }, [libraries, selectedLibraryId]);
 
   const selectLibrary = (libraryId: string) => { setSelectedLibraryId(libraryId); onSourceChange('library'); };

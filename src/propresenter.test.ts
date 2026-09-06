@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ActiveState, fetchActiveState, flattenSlides, groupStarts, isConfirmed, relativeTarget, remoteDisplayMode } from './propresenter';
+import { ActiveState, fetchActiveState, flattenSlides, groupStarts, isConfirmed, listArray, relativeTarget, remoteDisplayMode, unwrap } from './propresenter';
 
 const active: ActiveState = { playlistId: 'playlist-a', playlistItemId: 'item-a', presentationId: 'presentation-a', slideIndex: 1 };
 const slides = flattenSlides({ presentation: { groups: [{ uuid: 'verse', name: '1절', slides: [{ text: '첫 줄' }, { text: '둘째 줄' }] }, { uuid: 'chorus', name: '후렴', slides: [{ text: '' }] }] } });
@@ -54,5 +54,13 @@ describe('display and group rules', () => {
 
   it('exposes only groups used by the current presentation', () => {
     expect(groupStarts(slides)).toEqual([{ key: 'verse', name: '1절', index: 0 }, { key: 'chorus', name: '후렴', index: 2 }]);
+  });
+});
+
+describe('wrapped API responses', () => {
+  it('reads library collections and entries from data-wrapped responses', () => {
+    const response = { data: { libraries: [{ id: { uuid: 'library-a', name: '기본 라이브러리' } }] } };
+    expect(listArray(unwrap(response))).toEqual(response.data.libraries);
+    expect(listArray(unwrap({ data: { presentations: [{ id: { uuid: 'presentation-a' } }] } }))).toHaveLength(1);
   });
 });
