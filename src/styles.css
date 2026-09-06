@@ -19,7 +19,6 @@ input { width: 100%; border: 1px solid #46557a; border-radius: 10px; padding: 14
 .sidebar-collection-list { display:grid; gap:3px; padding-bottom:18px; border-bottom:1px solid #2a3550; }
 .sidebar-collection-item { width:100%; display:flex; align-items:center; gap:7px; padding:10px; border-radius:7px; background:transparent; color:#b8c1d6; text-align:left; font-size:.8rem; }
 .sidebar-collection-item:hover, .sidebar-collection-item.active { background:#2b3b67; color:#fff; }
-.sidebar-tree-marker { width:10px; color:#90a8ff; }
 .sidebar-selected-items { min-height:90px; padding-top:18px; }
 .sidebar-selected-heading { overflow:hidden; margin:0 10px 9px; color:#dbe4f5; font-size:.78rem; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
 .sidebar-item-list { display:grid; gap:2px; padding-left:14px; border-left:1px solid #34415e; }

@@ -116,12 +116,12 @@ function SidebarBrowser({ base, source, playlists, selectedPlaylist, playlistIte
       {source === 'library' && <>
         {librariesQuery.isLoading && <p className="sidebar-status">라이브러리 조회 중…</p>}
         {librariesQuery.error && <p className="form-error">연결 실패: {(librariesQuery.error as Error).message}</p>}
-        {libraries.map((library) => <button key={library.id} className={`sidebar-collection-item ${library.id === selectedLibraryId ? 'active' : ''}`} onClick={() => selectLibrary(library.id)}><span className="sidebar-tree-marker">{library.id === selectedLibraryId ? '⌄' : '›'}</span>{library.name}</button>)}
+        {libraries.map((library) => <button key={library.id} className={`sidebar-collection-item ${library.id === selectedLibraryId ? 'active' : ''}`} onClick={() => selectLibrary(library.id)}>{library.name}</button>)}
       </>}
       {source === 'playlist' && <>
         {playlistLoading && !playlists.length && <p className="sidebar-status">재생목록 조회 중…</p>}
         {playlistError && <p className="form-error">연결 실패: {playlistError.message}</p>}
-        {playlists.map((playlist) => <button key={playlist.id} className={`sidebar-collection-item ${playlist.id === selectedPlaylist?.id ? 'active' : ''}`} style={{ paddingLeft: 10 + playlist.depth * 15 }} onClick={() => selectPlaylist(playlist.id)}><span className="sidebar-tree-marker">{playlist.id === selectedPlaylist?.id ? '⌄' : '›'}</span>{playlist.name}</button>)}
+        {playlists.map((playlist) => <button key={playlist.id} className={`sidebar-collection-item ${playlist.id === selectedPlaylist?.id ? 'active' : ''}`} style={{ paddingLeft: 10 + playlist.depth * 15 }} onClick={() => selectPlaylist(playlist.id)}>{playlist.name}</button>)}
       </>}
     </div>
     <section className="sidebar-selected-items" aria-label={selectedName ? `${selectedName} 항목` : '선택한 항목'}>
