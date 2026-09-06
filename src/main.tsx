@@ -10,6 +10,7 @@ type Settings = { host: string; port: number };
 type Playlist = ApiObject & { id: string; name: string; depth: number };
 type Library = ApiObject & { id: string; name: string };
 type RemoteMode = 'text' | 'preview' | 'auto';
+const commandConfirmationTimeout = 4_000;
 
 function flattenPlaylists(data: unknown): Playlist[] {
   const result: Playlist[] = [];
@@ -281,7 +282,7 @@ type Command = { expected: ActiveExpectation; optimistic?: ActiveState };
 function RemoteSlide({ base, label, slide, presentationId, index, preview }: { base: string; label: string; slide?: Slide; presentationId: string | null; index: number; preview: boolean }) { return <section className={`remote-slide ${preview ? 'remote-preview' : 'remote-text'}`}><span className="remote-slide-label">{label}</span>{slide ? preview ? <img src={`${base}/v1/presentation/${encodeURIComponent(presentationId || '')}/thumbnail/${index}?quality=512`} alt={`${label} 슬라이드 미리보기`} /> : <p>{slideText(slide) || '텍스트 없음'}</p> : <p className="remote-empty">표시할 슬라이드가 없습니다.</p>}</section>; }
 
 function RemoteControl({ settings }: { settings: Settings }) {
-  const base = apiBase(settings); const queryClient = useQueryClient(); const activeQuery = useActiveState(base); const active = activeQuery.data; const [mode, setMode] = useState<RemoteMode>('auto'); const [command, setCommand] = useState<Command | null>(null); const [error, setError] = useState(''); const commandTimeout = useRef<number | null>(null);
+  const base = apiBase(settings); const queryClient = useQueryClient(); const activeQuery = useActiveState(base); const active = activeQuery.data; const [mode, setMode] = useState<RemoteMode>('auto'); const [command, setCommand] = useState<Command | null>(null); const [error, setError] = useState(''); const commandRef = useRef<Command | null>(null); const commandTimeout = useRef<number | null>(null);
   const playlistItemsQuery = useQuery({ queryKey: ['remote-playlist', base, active?.playlistId], queryFn: ({ signal }) => api(base, `/v1/playlist/${encodeURIComponent(active?.playlistId as string)}?chunked=false`, signal).then(playlistItems), enabled: Boolean(active?.playlistId), retry: 1 });
   const items = playlistItemsQuery.data || [];
   const activePresentationId = activePlaylistPresentationId(active, items);
@@ -291,10 +292,36 @@ function RemoteControl({ settings }: { settings: Settings }) {
   const nextSlidesQuery = useQuery({ queryKey: ['remote-adjacent-presentation', base, nextId], queryFn: ({ signal }) => api(base, `/v1/presentation/${encodeURIComponent(nextId as string)}?chunked=false`, signal).then(flattenSlides), enabled: Boolean(nextId), retry: 1 }); const previousSlidesQuery = useQuery({ queryKey: ['remote-adjacent-presentation', base, previousId], queryFn: ({ signal }) => api(base, `/v1/presentation/${encodeURIComponent(previousId as string)}?chunked=false`, signal).then(flattenSlides), enabled: Boolean(previousId), retry: 1 });
   const slides = currentSlidesQuery.data || []; const view = command?.optimistic || outputActive; const viewIndex = command?.optimistic ? command.optimistic.slideIndex : activeSlideIndex(outputActive, slides); const currentSlide = viewIndex >= 0 ? slides[viewIndex] : undefined; const effectiveMode = remoteDisplayMode(mode, currentSlide); const nextInCurrent = viewIndex + 1 < slides.length; const nextSlide = nextInCurrent ? slides[viewIndex + 1] : nextSlidesQuery.data?.[0]; const nextSlideId = nextInCurrent ? outputActive?.presentationId || null : nextId; const groups = useMemo(() => groupStarts(slides), [slides]);
   const refresh = () => queryClient.refetchQueries({ queryKey: ['active-state', base], type: 'active' });
-  const run = async (path: string, nextCommand: Command) => { if (command) return; setError(''); setCommand(nextCommand); if (commandTimeout.current !== null) window.clearTimeout(commandTimeout.current); commandTimeout.current = window.setTimeout(() => { setCommand(null); setError('ProPresenter 상태 확인 시간이 초과되었습니다. 다시 시도하세요.'); }, 1_800); try { await api(base, path); await refresh(); } catch (reason) { setCommand(null); setError((reason as Error).message || '슬라이드를 실행할 수 없습니다.'); } };
-  useEffect(() => { if (command && outputActive && isConfirmed(command.expected, outputActive)) { if (commandTimeout.current !== null) window.clearTimeout(commandTimeout.current); setCommand(null); } }, [outputActive, command]); useEffect(() => () => { if (commandTimeout.current !== null) window.clearTimeout(commandTimeout.current); }, []);
-  const relative = (direction: 1 | -1) => { if (!outputActive || !slides.length || command) return; const target = relativeTarget(outputActive, slides, direction, direction > 0 ? nextId : previousId, direction > 0 ? nextSlidesQuery.data : previousSlidesQuery.data); if (!target) return setError('이동할 프레젠테이션이 없습니다.'); void run(direction > 0 ? '/v1/trigger/next' : '/v1/trigger/previous', { expected: target, optimistic: target.optimistic ? { ...outputActive, slideIndex: target.slideIndex } : undefined }); };
-  const jumpGroup = (index: number) => { if (!outputActive?.presentationId || command) return; void run(`/v1/presentation/${encodeURIComponent(outputActive.presentationId)}/${index}/trigger`, { expected: { presentationId: outputActive.presentationId, slideIndex: index }, optimistic: { ...outputActive, slideIndex: index } }); };
+  const clearCommandTimer = () => { if (commandTimeout.current !== null) { window.clearTimeout(commandTimeout.current); commandTimeout.current = null; } };
+  const finishCommand = (nextError?: string) => { clearCommandTimer(); commandRef.current = null; setCommand(null); if (nextError) setError(nextError); };
+  const run = async (path: string, nextCommand: Command) => {
+    if (commandRef.current) return;
+    commandRef.current = nextCommand;
+    setError('');
+    setCommand(nextCommand);
+    clearCommandTimer();
+    commandTimeout.current = window.setTimeout(() => {
+      if (commandRef.current === nextCommand) finishCommand('ProPresenter 상태 확인 시간이 초과되었습니다. 다시 시도하세요.');
+    }, commandConfirmationTimeout);
+    try {
+      await api(base, path);
+      await refresh();
+    } catch (reason) {
+      if (commandRef.current === nextCommand) finishCommand((reason as Error).message || '슬라이드를 실행할 수 없습니다.');
+    }
+  };
+  useEffect(() => {
+    if (command && commandRef.current === command && outputActive && isConfirmed(command.expected, outputActive)) finishCommand();
+  }, [command, outputActive?.presentationId, outputActive?.slideIndex]);
+  useEffect(() => () => { clearCommandTimer(); commandRef.current = null; }, []);
+  const relative = (direction: 1 | -1) => {
+    if (!outputActive || !slides.length || commandRef.current) return;
+    if (currentPosition < 0) return setError('재생목록 항목을 불러오는 중입니다.');
+    const target = relativeTarget(outputActive, slides, direction, direction > 0 ? nextId : previousId, direction > 0 ? nextSlidesQuery.data : previousSlidesQuery.data);
+    if (!target) return setError('이동할 프레젠테이션이 없습니다.');
+    void run(direction > 0 ? '/v1/trigger/next' : '/v1/trigger/previous', { expected: target, optimistic: target.optimistic ? { ...outputActive, slideIndex: target.slideIndex } : undefined });
+  };
+  const jumpGroup = (index: number) => { if (!outputActive?.presentationId || commandRef.current) return; void run(`/v1/presentation/${encodeURIComponent(outputActive.presentationId)}/${index}/trigger`, { expected: { presentationId: outputActive.presentationId, slideIndex: index }, optimistic: { ...outputActive, slideIndex: index } }); };
   const groupActive = (groupIndex: number) => viewIndex >= groupIndex && viewIndex < (groups.find((group) => group.index > groupIndex)?.index ?? slides.length);
   return <main className="remote-app"><section className="remote-screen"><header className="remote-header"><button className="remote-back" onClick={() => window.location.assign('/')}>컨트롤러</button><div className="remote-mode-switch" role="group" aria-label="리모컨 화면 모드">{(['text', 'preview', 'auto'] as RemoteMode[]).map((value) => <button key={value} className={mode === value ? 'active' : ''} onClick={() => setMode(value)} aria-pressed={mode === value}>{value === 'text' ? '텍스트' : value === 'preview' ? '미리보기' : '자동'}</button>)}</div><span className="remote-status"><span className="status-dot" />{active ? '연결됨' : '확인 중'}</span></header>{error && <p className="remote-command-error">{error}</p>}<div className={`remote-slides ${effectiveMode === 'preview' ? 'single' : ''}`}>{currentSlidesQuery.isLoading ? <p className="remote-loading">현재 화면을 불러오는 중…</p> : <><RemoteSlide base={base} label="현재" slide={currentSlide} presentationId={outputActive?.presentationId || null} index={viewIndex} preview={effectiveMode === 'preview'} />{effectiveMode === 'text' && <RemoteSlide base={base} label="다음" slide={nextSlide} presentationId={nextSlideId} index={nextInCurrent ? viewIndex + 1 : 0} preview={false} />}</>}</div></section><section className="remote-control-area"><section className="remote-controls"><button className="remote-control previous" onClick={() => relative(-1)} disabled={Boolean(command)} aria-label="이전 슬라이드">‹<span>이전</span></button><button className="remote-control next" onClick={() => relative(1)} disabled={Boolean(command)} aria-label="다음 슬라이드"><span>다음</span>›</button></section><nav className="remote-group-strip" aria-label="프레젠테이션 그룹">{groups.map((group) => <button key={group.key} className={groupActive(group.index) ? 'active' : ''} disabled={Boolean(command)} onClick={() => jumpGroup(group.index)}>{group.name}</button>)}</nav></section></main>;
 }
