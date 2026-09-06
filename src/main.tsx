@@ -71,6 +71,27 @@ function LibrarySection({ base, onSelect }: { base: string; onSelect: (libraryId
   return <section className="sidebar-section library-section"><button className="sidebar-section-title sidebar-section-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}><span>라이브러리</span><span aria-hidden="true">{open ? '⌄' : '›'}</span></button>{open && <div className="library-list">{librariesQuery.isLoading && <p className="sidebar-status">라이브러리 조회 중…</p>}{(librariesQuery.data || []).map((library) => <LibraryGroup key={library.id} base={base} library={library} onSelect={onSelect} />)}</div>}</section>;
 }
 
+function PlaylistSection({ playlists, selected, items, isLoading, error, onSelect, onPresentationSelect }: { playlists: Playlist[]; selected: string | null; items: ApiObject[]; isLoading: boolean; error: Error | null; onSelect: (playlistId: string) => void; onPresentationSelect: (presentationId: string) => void }) {
+  return <section className="sidebar-section playlist-section">
+    <h3 className="sidebar-section-title">재생목록</h3>
+    {isLoading && <p className="sidebar-status">재생목록 조회 중…</p>}
+    {error && <p className="form-error">연결 실패: {error.message}</p>}
+    <nav className="playlist-list" aria-label="재생목록 목록">
+      {playlists.map((playlist) => <div className="playlist-tree-item" key={playlist.id}>
+        <button className={`playlist-item ${playlist.id === selected ? 'active' : ''}`} style={{ paddingLeft: 10 + playlist.depth * 15 }} onClick={() => onSelect(playlist.id)}>{playlist.name}</button>
+        {playlist.id === selected && <div className="playlist-child-list" aria-label={`${playlist.name} 항목`}>
+          {items.length === 0 && !isLoading && <span className="playlist-child-empty">항목 없음</span>}
+          {items.map((item, index) => item.type === 'header'
+            ? <span className="playlist-child-heading" key={`playlist-header-${index}`}>{objectName(item, '구분')}</span>
+            : item.type === 'presentation' && presentationUuid(item)
+              ? <button className="playlist-child-item" key={`${presentationUuid(item)}-${index}`} onClick={() => onPresentationSelect(presentationUuid(item) as string)}>{objectName(item)}</button>
+              : null)}
+        </div>}
+      </div>)}
+    </nav>
+  </section>;
+}
+
 function Controller({ settings, onConnection }: { settings: Settings; onConnection: () => void }) {
   const base = `http://${settings.host}:${settings.port}`;
   const queryClient = useQueryClient();
@@ -159,20 +180,19 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
   const saveSlideMode = (value: 'preview' | 'text') => { localStorage.setItem('propresenter-remote:slide-mode', value); setSlideMode(value); };
   const saveThumbnailQuality = (value: string) => { localStorage.setItem('propresenter-remote:thumbnail-quality', value); setThumbnailQuality(value); };
   const libraryItem = selectedLibrary ? { name: selectedLibrary.name, presentation_info: { presentation_uuid: selectedLibrary.presentationId } } : null;
+  const focusPresentation = (presentationId: string) => {
+    setSource('playlist');
+    setFollowing(false);
+    const target = Array.from(workspaceRef.current?.querySelectorAll<HTMLElement>(`.slide-card[data-presentation-uuid="${presentationId}"]`) || [])[0];
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   return <>
     <TopNav settings={settings} active={active} title={title} following={following} onFollow={() => setFollowing(true)} onSettings={() => setShowSettings(true)} onConnection={onConnection} />
     <main className="control-app">
       <aside className="sidebar">
         <LibrarySection base={base} onSelect={chooseLibraryPresentation} />
-        <section className="sidebar-section playlist-section">
-          <h3 className="sidebar-section-title">재생목록</h3>
-          {playlistsQuery.isLoading && <p className="sidebar-status">재생목록 조회 중…</p>}
-          {playlistsQuery.error && <p className="form-error">연결 실패: {(playlistsQuery.error as Error).message}</p>}
-          <nav className="playlist-list" aria-label="재생목록 목록">
-            {playlists.map((playlist) => <button key={playlist.id} className={`playlist-item ${source === 'playlist' && playlist.id === selected ? 'active' : ''}`} style={{ paddingLeft: 10 + playlist.depth * 15 }} onClick={() => choosePlaylist(playlist.id)}>{playlist.name}</button>)}
-          </nav>
-        </section>
+        <PlaylistSection playlists={playlists} selected={source === 'playlist' ? selected : null} items={itemsQuery.data || []} isLoading={itemsQuery.isLoading} error={itemsQuery.error as Error | null} onSelect={choosePlaylist} onPresentationSelect={focusPresentation} />
       </aside>
       <section ref={workspaceRef} className="workspace" onWheel={() => setFollowing(false)} onTouchMove={() => setFollowing(false)} tabIndex={-1}>
         {source === 'playlist' && <>
