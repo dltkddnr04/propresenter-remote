@@ -205,7 +205,9 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
     if (!following || !active?.presentationId || (active.slideIndex < 0 && !active.currentSlideUuid)) return;
     const workspace = workspaceRef.current;
     const candidates = workspace ? Array.from(workspace.querySelectorAll<HTMLButtonElement>('.slide-card')) : [];
-    const target = candidates.find((card) => card.dataset.presentationUuid === active.presentationId && (active.currentSlideUuid ? card.dataset.slideUuid === active.currentSlideUuid : Number(card.dataset.slideIndex) === active.slideIndex));
+    const presentationCards = candidates.filter((card) => card.dataset.presentationUuid === active.presentationId);
+    const target = (active.currentSlideUuid ? presentationCards.find((card) => card.dataset.slideUuid === active.currentSlideUuid) : undefined)
+      || presentationCards.find((card) => Number(card.dataset.slideIndex) === active.slideIndex);
     if (!workspace || !target) return;
     const box = workspace.getBoundingClientRect();
     const slide = target.getBoundingClientRect();
