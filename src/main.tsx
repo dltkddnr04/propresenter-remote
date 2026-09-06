@@ -68,7 +68,7 @@ function LibraryGroup({ base, library, onSelect }: { base: string; library: Libr
 
 function LibrarySection({ base, onSelect }: { base: string; onSelect: (libraryId: string, presentation: ApiObject) => void }) {
   const [open, setOpen] = useState(true); const librariesQuery = useQuery({ queryKey: ['libraries', base], queryFn: ({ signal }) => api(base, '/v1/libraries?chunked=false', signal).then(flattenLibraries), retry: 1 });
-  return <section className="sidebar-section"><button className="sidebar-section-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}><span>라이브러리</span><span aria-hidden="true">{open ? '⌄' : '›'}</span></button>{open && <div className="library-list">{librariesQuery.isLoading && <p className="sidebar-status">라이브러리 조회 중…</p>}{(librariesQuery.data || []).map((library) => <LibraryGroup key={library.id} base={base} library={library} onSelect={onSelect} />)}</div>}</section>;
+  return <section className="sidebar-section library-section"><button className="sidebar-section-title sidebar-section-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}><span>라이브러리</span><span aria-hidden="true">{open ? '⌄' : '›'}</span></button>{open && <div className="library-list">{librariesQuery.isLoading && <p className="sidebar-status">라이브러리 조회 중…</p>}{(librariesQuery.data || []).map((library) => <LibraryGroup key={library.id} base={base} library={library} onSelect={onSelect} />)}</div>}</section>;
 }
 
 function Controller({ settings, onConnection }: { settings: Settings; onConnection: () => void }) {
@@ -165,7 +165,7 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
     <main className="control-app">
       <aside className="sidebar">
         <LibrarySection base={base} onSelect={chooseLibraryPresentation} />
-        <section className="sidebar-section">
+        <section className="sidebar-section playlist-section">
           <h3 className="sidebar-section-title">재생목록</h3>
           {playlistsQuery.isLoading && <p className="sidebar-status">재생목록 조회 중…</p>}
           {playlistsQuery.error && <p className="form-error">연결 실패: {(playlistsQuery.error as Error).message}</p>}
