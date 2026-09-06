@@ -159,6 +159,7 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
   const workspaceRef = useRef<HTMLElement>(null);
   const followedPresentationRef = useRef<string | null>(null);
   const markRendered = useCallback(() => setRenderVersion((value) => value + 1), []);
+  const disableFollowing = () => { followedPresentationRef.current = null; setFollowing(false); };
 
   const playlistsQuery = useQuery({ queryKey: ['playlists', base], queryFn: ({ signal }) => api(base, '/v1/playlists?chunked=false', signal).then(flattenPlaylists), retry: 1 });
   const playlists = playlistsQuery.data || [];
@@ -224,12 +225,12 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
   const chooseLibraryPresentation = (libraryId: string, presentation: ApiObject) => {
     const presentationId = presentationUuid(presentation) || objectId(presentation);
     if (!presentationId) return;
-    setFollowing(false);
+    disableFollowing();
     setSource('library');
     setSelectedLibrary({ libraryId, presentationId, name: objectName(presentation) });
   };
   const choosePlaylist = (playlistId: string) => {
-    setFollowing(false);
+    disableFollowing();
     setSource('playlist');
     setSelectedLibrary(null);
     setSelected(playlistId);
@@ -239,7 +240,7 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
   const libraryItem = selectedLibrary ? { name: selectedLibrary.name, presentation_info: { presentation_uuid: selectedLibrary.presentationId } } : null;
   const focusPresentation = (presentationId: string) => {
     setSource('playlist');
-    setFollowing(false);
+    disableFollowing();
     const target = Array.from(workspaceRef.current?.querySelectorAll<HTMLElement>(`.slide-card[data-presentation-uuid="${presentationId}"]`) || [])[0];
     target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
@@ -248,9 +249,9 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
     <TopNav settings={settings} active={active} title={title} following={following} onFollow={() => setFollowing(true)} onSettings={() => setShowSettings(true)} onConnection={onConnection} />
     <main className="control-app">
       <aside className="sidebar">
-        <SidebarBrowser base={base} source={source} active={active} playlists={playlists} selectedPlaylist={selectedPlaylist} playlistItems={itemsQuery.data || []} playlistLoading={itemsQuery.isLoading} playlistError={itemsQuery.error as Error | null} onSourceChange={(nextSource) => { setFollowing(false); setSource(nextSource); }} onPlaylistSelect={choosePlaylist} onLibraryPresentation={chooseLibraryPresentation} onPresentationSelect={focusPresentation} />
+        <SidebarBrowser base={base} source={source} active={active} playlists={playlists} selectedPlaylist={selectedPlaylist} playlistItems={itemsQuery.data || []} playlistLoading={itemsQuery.isLoading} playlistError={itemsQuery.error as Error | null} onSourceChange={(nextSource) => { disableFollowing(); setSource(nextSource); }} onPlaylistSelect={choosePlaylist} onLibraryPresentation={chooseLibraryPresentation} onPresentationSelect={focusPresentation} />
       </aside>
-      <section ref={workspaceRef} className="workspace" onWheel={() => setFollowing(false)} onTouchMove={() => setFollowing(false)} tabIndex={-1}>
+      <section ref={workspaceRef} className="workspace" onWheel={disableFollowing} onTouchMove={disableFollowing} tabIndex={-1}>
         {source === 'playlist' && <>
           {itemsQuery.isLoading && <p>재생목록 항목 조회 중…</p>}
           {itemsQuery.error && <p className="form-error">재생목록을 불러올 수 없습니다.</p>}
