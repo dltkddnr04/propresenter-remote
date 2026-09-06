@@ -132,7 +132,7 @@ export async function fetchActiveState(base: string, signal?: AbortSignal): Prom
     api(base, '/v1/playlist/active?chunked=false', signal),
     api(base, '/v1/presentation/active?chunked=false', signal),
     api(base, '/v1/presentation/slide_index?chunked=false', signal),
-    api(base, '/v1/status/slide?chunked=false', signal),
+    api(base, '/v1/status/slide?chunked=false', signal).catch(() => null),
   ]);
   return { ...activePlaylistContext(playlist), presentationId: activePresentationId(presentation), slideIndex: slideIndex(slide), currentSlideUuid: currentSlideUuid(status) };
 }

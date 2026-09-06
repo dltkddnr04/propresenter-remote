@@ -18,6 +18,17 @@ describe('active state snapshot', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
+  it('falls back to slide index when output status is unavailable', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.includes('/status/slide')) return new Response('missing', { status: 404 });
+      const body = path.includes('/playlist/active') ? { presentation: { playlist: { uuid: 'playlist-a' }, item: { uuid: 'item-a' } } } : path.includes('/presentation/active') ? { presentation: { item: { uuid: 'presentation-a' } } } : { slide_index: 1 };
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchActiveState('http://propresenter.local')).resolves.toMatchObject({ presentationId: 'presentation-a', slideIndex: 1, currentSlideUuid: null });
+  });
+
   it('does not confirm a stale or mixed state', () => {
     expect(isConfirmed({ presentationId: 'presentation-a', slideIndex: 2 }, active)).toBe(false);
     expect(isConfirmed({ presentationId: 'presentation-b', slideIndex: 1 }, active)).toBe(false);
