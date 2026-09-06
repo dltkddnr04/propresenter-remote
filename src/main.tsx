@@ -93,7 +93,7 @@ function PlaylistSection({ playlists, selected, items, isLoading, error, onSelec
   </section>;
 }
 
-function SidebarBrowser({ base, source, playlists, selectedPlaylist, playlistItems, playlistLoading, playlistError, onSourceChange, onPlaylistSelect, onLibraryPresentation, onPresentationSelect }: { base: string; source: 'playlist' | 'library'; playlists: Playlist[]; selectedPlaylist: Playlist | undefined; playlistItems: ApiObject[]; playlistLoading: boolean; playlistError: Error | null; onSourceChange: (source: 'playlist' | 'library') => void; onPlaylistSelect: (playlistId: string) => void; onLibraryPresentation: (libraryId: string, presentation: ApiObject) => void; onPresentationSelect: (presentationId: string) => void }) {
+function SidebarBrowser({ base, source, active, playlists, selectedPlaylist, playlistItems, playlistLoading, playlistError, onSourceChange, onPlaylistSelect, onLibraryPresentation, onPresentationSelect }: { base: string; source: 'playlist' | 'library'; active?: ActiveState; playlists: Playlist[]; selectedPlaylist: Playlist | undefined; playlistItems: ApiObject[]; playlistLoading: boolean; playlistError: Error | null; onSourceChange: (source: 'playlist' | 'library') => void; onPlaylistSelect: (playlistId: string) => void; onLibraryPresentation: (libraryId: string, presentation: ApiObject) => void; onPresentationSelect: (presentationId: string) => void }) {
   const librariesQuery = useQuery({ queryKey: ['libraries', base], queryFn: ({ signal }) => api(base, '/v1/libraries?chunked=false', signal).then(flattenLibraries), retry: 1 });
   const libraries = librariesQuery.data || [];
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
@@ -131,11 +131,13 @@ function SidebarBrowser({ base, source, playlists, selectedPlaylist, playlistIte
       {selectedError && <p className="form-error">항목을 불러올 수 없습니다.</p>}
       {!selectedLoading && !selectedItems.length && selectedName && <p className="sidebar-child-empty">항목 없음</p>}
       <div className="sidebar-item-list">
-        {selectedItems.map((item, index) => item.type === 'header'
-          ? <span className="sidebar-item-heading" key={`sidebar-header-${index}`}>{objectName(item, '구분')}</span>
-          : (source === 'library' ? objectId(item) : item.type === 'presentation' && presentationUuid(item))
-            ? <button className="sidebar-item-button" key={`${source === 'library' ? objectId(item) : presentationUuid(item)}-${index}`} onClick={() => source === 'library' ? onLibraryPresentation(selectedLibraryId as string, item) : onPresentationSelect(presentationUuid(item) as string)}>{objectName(item)}</button>
-            : null)}
+        {selectedItems.map((item, index) => {
+          if (item.type === 'header') return <span className="sidebar-item-heading" key={`sidebar-header-${index}`}>{objectName(item, '구분')}</span>;
+          const itemId = source === 'library' ? objectId(item) : item.type === 'presentation' ? presentationUuid(item) : null;
+          if (!itemId) return null;
+          const current = source === 'playlist' && (itemId === active?.presentationId || objectId(item) === active?.playlistItemId);
+          return <button className={`sidebar-item-button ${current ? 'active' : ''}`} aria-current={current ? 'true' : undefined} key={`${itemId}-${index}`} onClick={() => source === 'library' ? onLibraryPresentation(selectedLibraryId as string, item) : onPresentationSelect(itemId)}>{objectName(item)}</button>;
+        })}
       </div>
     </section>
   </div>;
@@ -241,7 +243,7 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
     <TopNav settings={settings} active={active} title={title} following={following} onFollow={() => setFollowing(true)} onSettings={() => setShowSettings(true)} onConnection={onConnection} />
     <main className="control-app">
       <aside className="sidebar">
-        <SidebarBrowser base={base} source={source} playlists={playlists} selectedPlaylist={selectedPlaylist} playlistItems={itemsQuery.data || []} playlistLoading={itemsQuery.isLoading} playlistError={itemsQuery.error as Error | null} onSourceChange={(nextSource) => { setFollowing(false); setSource(nextSource); }} onPlaylistSelect={choosePlaylist} onLibraryPresentation={chooseLibraryPresentation} onPresentationSelect={focusPresentation} />
+        <SidebarBrowser base={base} source={source} active={active} playlists={playlists} selectedPlaylist={selectedPlaylist} playlistItems={itemsQuery.data || []} playlistLoading={itemsQuery.isLoading} playlistError={itemsQuery.error as Error | null} onSourceChange={(nextSource) => { setFollowing(false); setSource(nextSource); }} onPlaylistSelect={choosePlaylist} onLibraryPresentation={chooseLibraryPresentation} onPresentationSelect={focusPresentation} />
       </aside>
       <section ref={workspaceRef} className="workspace" onWheel={() => setFollowing(false)} onTouchMove={() => setFollowing(false)} tabIndex={-1}>
         {source === 'playlist' && <>
