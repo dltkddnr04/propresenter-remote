@@ -1,102 +1,127 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ActiveState, activePlaylistPresentationId, activeSlideIndex, fetchActiveState, flattenSlides, groupStarts, isConfirmed, listArray, outputSlideIndex, relativeTarget, remoteDisplayMode, slideUuid, unwrap } from './propresenter';
+import {
+  CanonicalState,
+  currentCueIndex,
+  executeCommand,
+  fetchCanonicalState,
+  flattenSlides,
+  groupStarts,
+  isCurrentContext,
+  parsePresentationPosition,
+  parseStatusCues,
+  playlistItemContext,
+  remoteDisplayMode,
+  withPlaylistItemContext,
+} from './propresenter';
 
-const active: ActiveState = { playlistId: 'playlist-a', playlistItemId: 'item-a', presentationId: 'presentation-a', slideIndex: 1, currentSlideUuid: 'slide-b' };
-const slides = flattenSlides({ presentation: { groups: [{ uuid: 'verse', name: '1절', slides: [{ uuid: 'slide-a', text: '첫 줄' }, { uuid: 'slide-b', text: '둘째 줄' }] }, { uuid: 'chorus', name: '후렴', slides: [{ uuid: 'slide-c', text: '' }] }] } });
+const state = (overrides: Partial<CanonicalState> = {}): CanonicalState => ({
+  playlistId: 'playlist-a', playlistItemId: 'item-a', playlistItemIndex: 0, presentationId: 'presentation-a', slideIndex: 1,
+  currentCue: { uuid: 'output-slide', text: '현재 출력', notes: '' }, nextCue: { uuid: 'next-output', text: '다음 출력', notes: '' }, playlistItem: null,
+  ...overrides,
+});
 
 afterEach(() => vi.restoreAllMocks());
 
-describe('active state snapshot', () => {
-  it('combines active APIs and the actual output slide into one snapshot', async () => {
+describe('canonical ProPresenter state', () => {
+  it('parses presentation ID and index as one coherent slide-index pair', () => {
+    expect(parsePresentationPosition({ presentation_index: { presentation_id: { uuid: 'presentation-live' }, index: 12 } })).toEqual({ presentationId: 'presentation-live', slideIndex: 12 });
+  });
+
+  it('uses the slide-index presentation ID instead of combining a separate active presentation', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
-      const body = path.includes('/playlist/active') ? { presentation: { playlist: { uuid: 'playlist-a' }, item: { uuid: 'item-a' } } } : path.includes('/presentation/active') ? { presentation: { item: { uuid: 'presentation-a' } } } : path.includes('/status/slide') ? { current: { uuid: 'slide-b' } } : { slide_index: 1 };
+      const body = path.includes('/presentation/slide_index') ? { presentation_index: { presentation_id: { uuid: 'presentation-from-index' }, index: 3 } }
+        : path.includes('/playlist/active') ? { presentation: { playlist: { uuid: 'playlist-a' }, item: { uuid: 'item-a', index: 4 } } }
+          : { current: { uuid: 'output-slide', text: '현재 출력' }, next: { uuid: 'next-output', text: '다음 출력' } };
       return new Response(JSON.stringify(body), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
-    await expect(fetchActiveState('http://propresenter.local')).resolves.toEqual(active);
+    await expect(fetchCanonicalState('http://propresenter.local')).resolves.toMatchObject({ presentationId: 'presentation-from-index', slideIndex: 3, playlistItemId: 'item-a' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('uses active presentation only as a fallback when slide-index lacks its presentation ID', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      const body = path.includes('/presentation/slide_index') ? { presentation_index: { index: 2 } }
+        : path.includes('/presentation/active') ? { presentation: { id: { uuid: 'fallback-presentation' } } }
+          : path.includes('/playlist/active') ? { presentation: { playlist: { uuid: 'playlist-a' }, item: { uuid: 'item-a' } } }
+            : { current: { text: '현재' }, next: { text: '다음' } };
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchCanonicalState('http://propresenter.local')).resolves.toMatchObject({ presentationId: 'fallback-presentation', slideIndex: 2 });
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
-  it('falls back to slide index when output status is unavailable', async () => {
+  it('continues without status slide data and keeps the position pair authoritative', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
       if (path.includes('/status/slide')) return new Response('missing', { status: 404 });
-      const body = path.includes('/playlist/active') ? { presentation: { playlist: { uuid: 'playlist-a' }, item: { uuid: 'item-a' } } } : path.includes('/presentation/active') ? { presentation: { item: { uuid: 'presentation-a' } } } : { slide_index: 1 };
+      const body = path.includes('/presentation/slide_index') ? { presentation_index: { presentation_id: { uuid: 'presentation-a' }, index: 1 } }
+        : { presentation: { playlist: { uuid: 'playlist-a' }, item: { uuid: 'item-a' } } };
       return new Response(JSON.stringify(body), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
-    await expect(fetchActiveState('http://propresenter.local')).resolves.toMatchObject({ presentationId: 'presentation-a', slideIndex: 1, currentSlideUuid: null });
+    await expect(fetchCanonicalState('http://propresenter.local')).resolves.toMatchObject({ presentationId: 'presentation-a', slideIndex: 1, currentCue: null, nextCue: null });
   });
 
-  it('does not confirm a stale or mixed state', () => {
-    expect(isConfirmed({ presentationId: 'presentation-a', slideIndex: 2 }, active)).toBe(false);
-    expect(isConfirmed({ presentationId: 'presentation-b', slideIndex: 1 }, active)).toBe(false);
-    expect(isConfirmed({ presentationId: 'presentation-a', slideIndex: 1 }, active)).toBe(true);
-    expect(isConfirmed({ presentationId: 'presentation-b', slideIndex: null }, { ...active, presentationId: 'presentation-b', slideIndex: 7 })).toBe(true);
+  it('treats status cues as output data even when presentation detail has no slide UUID', () => {
+    const detail = flattenSlides({ presentation: { groups: [{ slides: [{ text: '첫 슬라이드' }, { text: '둘째 슬라이드' }] }] } });
+    const output = parseStatusCues({ current: { uuid: 'output-only', text: '실제 출력' }, next: { uuid: 'next-only', text: '실제 다음' } });
+    expect(detail[1].uuid).toBeUndefined();
+    expect(output.currentCue?.uuid).toBe('output-only');
+    expect(currentCueIndex(state({ ...output, slideIndex: 1 }), { source: 'library', libraryId: 'library-a', presentationId: 'presentation-a', name: '테스트', cacheKey: 'library-a:presentation-a' })).toBe(1);
   });
 });
 
-describe('remote transitions', () => {
-  it('uses an optimistic target within a presentation', () => {
-    expect(relativeTarget(active, slides, 1, 'presentation-b')).toEqual({ presentationId: 'presentation-a', slideIndex: 2, optimistic: true });
+describe('playlist identity and arrangement', () => {
+  const repeatedPresentation = [
+    { id: { uuid: 'item-a', name: '첫 번째 편곡' }, type: 'presentation', index: 0, presentation_info: { presentation_uuid: 'presentation-shared', arrangement_uuid: 'arrangement-a' } },
+    { type: 'media', id: { uuid: 'media-between', name: '영상' }, index: 1 },
+    { id: { uuid: 'item-b', name: '두 번째 편곡' }, type: 'presentation', index: 2, presentation_info: { presentation_uuid: 'presentation-shared', arrangement_uuid: 'arrangement-b' } },
+  ];
+
+  it('keeps identical presentation UUIDs distinct by playlist item and arrangement', () => {
+    const first = playlistItemContext('playlist-a', repeatedPresentation[0], 0)!;
+    const second = playlistItemContext('playlist-a', repeatedPresentation[2], 2)!;
+    expect(first.presentationId).toBe(second.presentationId);
+    expect(first.cacheKey).not.toBe(second.cacheKey);
+    const resolved = withPlaylistItemContext(state({ playlistItemId: 'item-b', presentationId: 'presentation-shared', slideIndex: 4 }), repeatedPresentation);
+    expect(resolved.playlistItem?.arrangementId).toBe('arrangement-b');
+    expect(isCurrentContext(resolved, first)).toBe(false);
+    expect(isCurrentContext(resolved, second)).toBe(true);
+    expect(isCurrentContext(resolved, { ...second, playlistId: 'another-playlist' })).toBe(false);
   });
 
-  it('moves to the adjacent presentation at its boundary without optimism', () => {
-    expect(relativeTarget({ ...active, slideIndex: 2 }, slides, 1, 'presentation-b', slides)).toEqual({ presentationId: 'presentation-b', slideIndex: 0, optimistic: false });
-    expect(relativeTarget({ ...active, slideIndex: 0 }, slides, -1, 'presentation-before', slides)).toEqual({ presentationId: 'presentation-before', slideIndex: 2, optimistic: false });
-  });
-
-  it('waits for the actual final index when the previous presentation prefetch is late', () => {
-    expect(relativeTarget({ ...active, slideIndex: 0 }, slides, -1, 'presentation-before')).toEqual({ presentationId: 'presentation-before', slideIndex: null, optimistic: false });
-  });
-
-  it('returns no target when an adjacent presentation is unavailable', () => {
-    expect(relativeTarget({ ...active, slideIndex: 2 }, slides, 1, null)).toBeNull();
+  it('accepts externally changed canonical state without deriving a next presentation through media items', () => {
+    const media = playlistItemContext('playlist-a', repeatedPresentation[1], 1)!;
+    const externallyChanged = withPlaylistItemContext(state({ playlistItemId: 'media-between', presentationId: null, slideIndex: -1 }), repeatedPresentation);
+    expect(externallyChanged.playlistItem?.playlistItemId).toBe(media.playlistItemId);
+    expect(externallyChanged.presentationId).toBeNull();
   });
 });
 
-describe('display and group rules', () => {
-  it('prefers the actual output slide UUID over a stale index', () => {
-    expect(slideUuid({ id: { uuid: 'slide-b' } })).toBe('slide-b');
-    expect(activeSlideIndex({ ...active, slideIndex: 0 }, slides)).toBe(1);
-    expect(activeSlideIndex({ ...active, slideIndex: -1 }, slides)).toBe(1);
-    expect(slides[0].groupColor).toBeNull();
+describe('shared display rules', () => {
+  it('gives controller and remote the same current presentation and cue from canonical state', () => {
+    const context = playlistItemContext('playlist-a', { id: { uuid: 'item-a' }, type: 'presentation', presentation_info: { presentation_uuid: 'presentation-a' } }, 0)!;
+    const current = withPlaylistItemContext(state(), [{ id: { uuid: 'item-a' }, type: 'presentation', presentation_info: { presentation_uuid: 'presentation-a' } }]);
+    expect(currentCueIndex(current, context)).toBe(1);
+    expect(current.currentCue?.text).toBe('현재 출력');
   });
 
-  it('uses the active playlist item and output UUID when focus points elsewhere', () => {
-    const items = [{ id: { uuid: 'item-a' }, presentation_info: { presentation_uuid: 'presentation-live' } }];
-    const focused = { ...active, presentationId: 'presentation-focused' };
-    expect(activePlaylistPresentationId(focused, items)).toBe('presentation-live');
-    expect(outputSlideIndex(focused, 'presentation-live', slides)).toBe(1);
-    expect(outputSlideIndex(focused, 'presentation-focused', flattenSlides({ presentation: { groups: [{ slides: [{ uuid: 'another-slide' }, { uuid: 'second-slide' }] }] } }))).toBe(1);
+  it('uses the current status cue for automatic remote mode and keeps next cue output-based', () => {
+    expect(remoteDisplayMode('auto', { uuid: null, text: '현재 출력', notes: '' })).toBe('text');
+    expect(remoteDisplayMode('auto', { uuid: null, text: '', notes: '' })).toBe('preview');
+    expect(groupStarts(flattenSlides({ presentation: { groups: [{ name: '1절', slides: [{ text: 'a' }] }, { name: '후렴', slides: [{ text: 'b' }] }] } }))).toEqual([{ key: 'group-0', name: '1절', index: 0 }, { key: 'group-1', name: '후렴', index: 1 }]);
   });
 
-  it('falls back to the active presentation index when detail slides do not expose UUIDs', () => {
-    const uuidlessSlides = flattenSlides({ presentation: { groups: [{ slides: [{ text: '첫 슬라이드' }, { text: '현재 슬라이드' }] }] } });
-    expect(outputSlideIndex({ ...active, currentSlideUuid: 'output-only-slide', slideIndex: 1 }, 'presentation-a', uuidlessSlides)).toBe(1);
-  });
-
-  it('normalizes ProPresenter group colors for card metadata', () => {
-    const colored = flattenSlides({ presentation: { groups: [{ name: '후렴', groupColor: '0.2 0.6 1 0.5', slides: [{ text: '색상' }] }] } });
-    expect(colored[0].groupColor).toBe('rgba(51, 153, 255, 0.5)');
-  });
-  it('uses text mode only when the current automatic slide has text', () => {
-    expect(remoteDisplayMode('auto', slides[0])).toBe('text');
-    expect(remoteDisplayMode('auto', slides[2])).toBe('preview');
-    expect(remoteDisplayMode('text', slides[2])).toBe('text');
-  });
-
-  it('exposes only groups used by the current presentation', () => {
-    expect(groupStarts(slides)).toEqual([{ key: 'verse', name: '1절', index: 0 }, { key: 'chorus', name: '후렴', index: 2 }]);
-  });
-});
-
-describe('wrapped API responses', () => {
-  it('reads library collections and entries from data-wrapped responses', () => {
-    const response = { data: { libraries: [{ id: { uuid: 'library-a', name: '기본 라이브러리' } }] } };
-    expect(listArray(unwrap(response))).toEqual(response.data.libraries);
-    expect(listArray(unwrap({ data: { presentations: [{ id: { uuid: 'presentation-a' } }] } }))).toHaveLength(1);
-    expect(listArray({ data: { library: { items: [{ id: { uuid: 'presentation-b' } }] } } })).toHaveLength(1);
+  it('accepts the refreshed actual state after a successful command without index prediction', async () => {
+    const actual = state({ presentationId: null, playlistItemId: 'media-between', slideIndex: -1 });
+    const send = vi.fn(async () => undefined);
+    const refresh = vi.fn(async () => actual);
+    await expect(executeCommand(send, refresh)).resolves.toBe(actual);
+    expect(send).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledOnce();
   });
 });

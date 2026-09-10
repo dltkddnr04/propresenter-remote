@@ -2,6 +2,45 @@ export type ApiObject = Record<string, any>;
 
 export type ConnectionSettings = { host: string; port: number };
 
+export type Cue = { uuid: string | null; text: string; notes: string };
+
+export type PlaylistItemContext = {
+  source: 'playlist';
+  playlistId: string;
+  playlistItemId: string;
+  playlistItemIndex: number;
+  presentationId: string | null;
+  arrangementId: string | null;
+  kind: string;
+  name: string;
+  cacheKey: string;
+};
+
+export type LibraryPresentationContext = {
+  source: 'library';
+  libraryId: string;
+  presentationId: string;
+  name: string;
+  cacheKey: string;
+};
+
+export type PresentationContext = PlaylistItemContext | LibraryPresentationContext;
+
+export type CanonicalState = {
+  playlistId: string | null;
+  playlistItemId: string | null;
+  playlistItemIndex: number | null;
+  presentationId: string | null;
+  slideIndex: number;
+  currentCue: Cue | null;
+  nextCue: Cue | null;
+  playlistItem: PlaylistItemContext | null;
+};
+
+export type Slide = ApiObject & { groupName: string; groupKey: string; groupColor: string | null; flatIndex: number };
+
+const requestTimeoutMs = 2_500;
+
 export function isNativeProxy(): boolean {
   if (typeof document === 'undefined') return false;
   return document.cookie.split(';').some((part) => {
@@ -14,42 +53,13 @@ export function apiBase(settings: ConnectionSettings): string {
   return isNativeProxy() ? '' : `http://${settings.host}:${settings.port}`;
 }
 
-export type ActiveState = {
-  playlistId: string | null;
-  playlistItemId: string | null;
-  presentationId: string | null;
-  slideIndex: number;
-  currentSlideUuid: string | null;
-};
-
-export type ActiveExpectation = {
-  presentationId: string | null;
-  // The previous presentation is fetched eagerly, but allow its server-selected
-  // final index to confirm a boundary command while that prefetch is still pending.
-  slideIndex: number | null;
-};
-
-export type Slide = ApiObject & {
-  groupName: string;
-  groupKey: string;
-  groupColor: string | null;
-  flatIndex: number;
-};
-
-const requestTimeoutMs = 2_500;
-
 export async function api(base: string, path: string, signal?: AbortSignal): Promise<unknown> {
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
   const timeout = globalThis.setTimeout(abort, requestTimeoutMs);
-
   try {
-    const response = await fetch(`${base}${path}`, {
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    });
+    const response = await fetch(`${base}${path}`, { cache: 'no-store', headers: { Accept: 'application/json' }, signal: controller.signal });
     if (!response.ok) throw new Error(`${response.status} ${path}`);
     const text = await response.text();
     try { return JSON.parse(text); } catch { return text; }
@@ -59,9 +69,7 @@ export async function api(base: string, path: string, signal?: AbortSignal): Pro
   }
 }
 
-export function unwrap(value: unknown): unknown {
-  return (value as ApiObject)?.data ?? value;
-}
+export function unwrap(value: unknown): unknown { return (value as ApiObject)?.data ?? value; }
 
 export function listArray(value: unknown): ApiObject[] {
   if (Array.isArray(value)) return value;
@@ -77,23 +85,40 @@ export function listArray(value: unknown): ApiObject[] {
   return [];
 }
 
+function identifier(value: unknown): string | null {
+  if (typeof value === 'string' && value) return value;
+  if (!value || typeof value !== 'object') return null;
+  const object = value as ApiObject;
+  return identifier(object.uuid) || identifier(object.id) || null;
+}
+
+function indexValue(value: unknown): number | null {
+  const index = Number(value);
+  return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
 export function objectId(value?: ApiObject): string | null {
   if (!value) return null;
-  return value.id?.uuid || value.uuid || value.playlist_id?.uuid || value.presentation_info?.presentation_uuid || value.id || null;
+  return identifier(value.id) || identifier(value.uuid) || identifier(value.playlist_id) || identifier(value.presentation_info?.presentation_uuid) || null;
 }
 
 export function objectName(value?: ApiObject, fallback = '이름 없는 항목'): string {
   return value?.id?.name || value?.name || value?.title || value?.playlist_id?.name || value?.presentation_info?.name || fallback;
 }
 
-export function presentationUuid(item?: ApiObject): string | null {
-  return item?.presentation_info?.presentation_uuid || null;
+export function playlistItemId(item?: ApiObject): string | null {
+  if (!item) return null;
+  return identifier(item.id) || identifier(item.uuid) || identifier(item.playlist_item_id) || null;
 }
 
-export function activePlaylistPresentationId(active: ActiveState | undefined, items: ApiObject[]): string | null {
-  if (!active) return null;
-  const activeItem = items.find((item) => objectId(item) === active.playlistItemId);
-  return presentationUuid(activeItem) || active.presentationId;
+export function presentationUuid(item?: ApiObject): string | null {
+  if (!item) return null;
+  return identifier(item.presentation_info?.presentation_uuid) || identifier(item.presentation_info?.presentation_id) || identifier(item.presentation?.id) || identifier(item.presentation_id) || null;
+}
+
+function arrangementUuid(item?: ApiObject): string | null {
+  if (!item) return null;
+  return identifier(item.presentation_info?.arrangement_uuid) || identifier(item.presentation_info?.arrangement_id) || identifier(item.presentation_info?.arrangement) || identifier(item.arrangement_uuid) || identifier(item.arrangement_id) || identifier(item.arrangement) || null;
 }
 
 export function playlistItems(data: unknown): ApiObject[] {
@@ -101,38 +126,101 @@ export function playlistItems(data: unknown): ApiObject[] {
   return object?.playlist?.items || listArray(object);
 }
 
-export function activePlaylistContext(data: unknown): Pick<ActiveState, 'playlistId' | 'playlistItemId'> {
-  const value = unwrap(data) as ApiObject;
+export function playlistItemContext(playlistId: string, item: ApiObject, fallbackIndex: number): PlaylistItemContext | null {
+  const id = playlistItemId(item);
+  if (!id) return null;
+  const itemIndex = indexValue(item.index) ?? fallbackIndex;
+  const presentationId = presentationUuid(item);
+  const arrangementId = arrangementUuid(item);
   return {
-    playlistId: value?.presentation?.playlist?.uuid || value?.playlist?.uuid || objectId(value?.playlist || value),
-    playlistItemId: value?.presentation?.item?.uuid || value?.item?.uuid || null,
+    source: 'playlist', playlistId, playlistItemId: id, playlistItemIndex: itemIndex, presentationId, arrangementId,
+    kind: String(item.type || item.presentation_info?.type || 'unknown'), name: objectName(item),
+    cacheKey: [playlistId, id, arrangementId || 'default', presentationId || item.type || 'item'].join(':'),
+  };
+}
+
+export function libraryPresentationContext(libraryId: string, item: ApiObject): LibraryPresentationContext | null {
+  const presentationId = presentationUuid(item) || objectId(item);
+  if (!presentationId) return null;
+  return { source: 'library', libraryId, presentationId, name: objectName(item), cacheKey: [libraryId, presentationId].join(':') };
+}
+
+export function parsePlaylistActive(data: unknown): Pick<CanonicalState, 'playlistId' | 'playlistItemId' | 'playlistItemIndex'> {
+  const value = unwrap(data) as ApiObject;
+  const presentation = value?.presentation || value;
+  const item = presentation?.item || value?.item;
+  return {
+    playlistId: identifier(presentation?.playlist?.uuid) || identifier(value?.playlist?.uuid) || identifier(value?.playlist),
+    playlistItemId: identifier(item?.uuid) || identifier(item?.id) || null,
+    playlistItemIndex: indexValue(item?.index),
+  };
+}
+
+export function parsePresentationPosition(data: unknown): Pick<CanonicalState, 'presentationId' | 'slideIndex'> {
+  const object = unwrap(data) as ApiObject;
+  const position = object?.presentation_index || object?.slide_index || object;
+  return {
+    presentationId: identifier(position?.presentation_id) || identifier(position?.presentation?.id) || null,
+    slideIndex: indexValue(position?.index ?? object?.index ?? object?.slide_index?.index) ?? -1,
   };
 }
 
 export function activePresentationId(data: unknown): string | null {
   const object = unwrap(data) as ApiObject;
-  return object?.presentation?.item?.uuid || object?.presentation?.id?.uuid || object?.presentation?.uuid || object?.id?.uuid || object?.uuid || null;
+  return identifier(object?.presentation?.id) || identifier(object?.presentation?.item) || identifier(object?.presentation?.uuid) || identifier(object?.id) || identifier(object?.uuid) || null;
 }
 
-export function slideIndex(data: unknown): number {
-  const object = unwrap(data) as ApiObject;
-  for (const value of [object?.presentation_index?.index, object?.presentation_index, object?.index, object?.slide_index?.index, object?.slide_index]) {
-    const index = Number(value);
-    if (Number.isInteger(index)) return index;
-  }
-  return -1;
+function parseCue(value: unknown): Cue | null {
+  if (!value || typeof value !== 'object') return null;
+  const cue = value as ApiObject;
+  return { uuid: identifier(cue.uuid) || identifier(cue.id) || null, text: String(cue.text || '').replace(/\s+/g, ' ').trim(), notes: String(cue.notes || '').trim() };
 }
 
-export function slideUuid(value?: ApiObject): string | null {
-  if (!value) return null;
-  return value.uuid || value.id?.uuid || value.slide?.uuid || value.slide?.id?.uuid || null;
-}
-
-export function currentSlideUuid(data: unknown): string | null {
+export function parseStatusCues(data: unknown): Pick<CanonicalState, 'currentCue' | 'nextCue'> {
   const value = unwrap(data) as ApiObject;
-  const current = value?.current || value?.slide?.current || value?.data?.current;
-  return slideUuid(current);
+  const source = value?.slide || value?.data || value;
+  return { currentCue: parseCue(source?.current), nextCue: parseCue(source?.next) };
 }
+
+export async function fetchCanonicalState(base: string, signal?: AbortSignal): Promise<CanonicalState> {
+  const [positionData, playlistData, statusData] = await Promise.all([
+    api(base, '/v1/presentation/slide_index?chunked=false', signal),
+    api(base, '/v1/playlist/active?chunked=false', signal),
+    api(base, '/v1/status/slide?chunked=false', signal).catch(() => null),
+  ]);
+  const position = parsePresentationPosition(positionData);
+  const presentationId = position.presentationId || activePresentationId(await api(base, '/v1/presentation/active?chunked=false', signal));
+  return { ...parsePlaylistActive(playlistData), presentationId, slideIndex: position.slideIndex, ...parseStatusCues(statusData), playlistItem: null };
+}
+
+export async function executeCommand<T>(send: () => Promise<void>, refresh: () => Promise<T>): Promise<T> {
+  await send();
+  return refresh();
+}
+
+export function withPlaylistItemContext(state: CanonicalState, items: ApiObject[]): CanonicalState {
+  if (!state.playlistId || !state.playlistItemId) return state;
+  const index = items.findIndex((item) => playlistItemId(item) === state.playlistItemId);
+  return { ...state, playlistItem: index >= 0 ? playlistItemContext(state.playlistId, items[index], index) : null };
+}
+
+export function isCurrentContext(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): boolean {
+  if (!state || !context || !context.presentationId || state.presentationId !== context.presentationId) return false;
+  return context.source === 'library' || (state.playlistId === context.playlistId && state.playlistItemId === context.playlistItemId);
+}
+
+export function currentCueIndex(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): number {
+  return isCurrentContext(state, context) ? state!.slideIndex : -1;
+}
+
+export function flattenSlides(data: unknown): Slide[] {
+  const presentation = (unwrap(data) as ApiObject)?.presentation || unwrap(data) as ApiObject;
+  return (presentation?.groups || []).flatMap((group: ApiObject, groupIndex: number) =>
+    (group.slides || []).map((slide: ApiObject) => ({ ...slide, groupName: group.name || '', groupKey: identifier(group.uuid) || identifier(group.id) || `group-${groupIndex}`, groupColor: normalizeGroupColor(group.groupColor || group.group_color || group.color), flatIndex: 0 })),
+  ).map((slide: Slide, index: number) => ({ ...slide, flatIndex: index }));
+}
+
+export function slideText(slide?: Slide): string { return String(slide?.text || '').replace(/\s+/g, ' ').trim(); }
 
 export function normalizeGroupColor(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -147,76 +235,16 @@ export function normalizeGroupColor(value: unknown): string | null {
   }
   if (!value || typeof value !== 'object') return null;
   const color = value as ApiObject;
-  const red = Number(color.red ?? color.r);
-  const green = Number(color.green ?? color.g);
-  const blue = Number(color.blue ?? color.b);
+  const red = Number(color.red ?? color.r); const green = Number(color.green ?? color.g); const blue = Number(color.blue ?? color.b);
   if (![red, green, blue].every(Number.isFinite)) return null;
-  const alpha = Number(color.alpha ?? color.a ?? 1);
-  const scale = Math.max(red, green, blue) <= 1 ? 255 : 1;
+  const alpha = Number(color.alpha ?? color.a ?? 1); const scale = Math.max(red, green, blue) <= 1 ? 255 : 1;
   return `rgba(${Math.round(red * scale)}, ${Math.round(green * scale)}, ${Math.round(blue * scale)}, ${Math.max(0, Math.min(1, Number.isFinite(alpha) ? alpha : 1))})`;
 }
 
-export async function fetchActiveState(base: string, signal?: AbortSignal): Promise<ActiveState> {
-  const [playlist, presentation, slide, status] = await Promise.all([
-    api(base, '/v1/playlist/active?chunked=false', signal),
-    api(base, '/v1/presentation/active?chunked=false', signal),
-    api(base, '/v1/presentation/slide_index?chunked=false', signal),
-    api(base, '/v1/status/slide?chunked=false', signal).catch(() => null),
-  ]);
-  return { ...activePlaylistContext(playlist), presentationId: activePresentationId(presentation), slideIndex: slideIndex(slide), currentSlideUuid: currentSlideUuid(status) };
-}
-
-export function flattenSlides(data: unknown): Slide[] {
-  const presentation = (unwrap(data) as ApiObject)?.presentation || unwrap(data) as ApiObject;
-  return (presentation?.groups || []).flatMap((group: ApiObject, groupIndex: number) =>
-    (group.slides || []).map((slide: ApiObject) => ({
-      ...slide,
-      groupName: group.name || '',
-      groupKey: group.uuid || group.id?.uuid || `group-${groupIndex}`,
-      groupColor: normalizeGroupColor(group.groupColor || group.group_color || group.color),
-      flatIndex: 0,
-    })),
-  ).map((slide: Slide, index: number) => ({ ...slide, flatIndex: index }));
-}
-
-export function slideText(slide?: Slide): string {
-  return String(slide?.text || '').replace(/\s+/g, ' ').trim();
-}
-
-export function activeSlideIndex(active: ActiveState | undefined, slides: Slide[]): number {
-  if (!active) return -1;
-  if (active.currentSlideUuid) {
-    const uuidIndex = slides.findIndex((slide) => slideUuid(slide) === active.currentSlideUuid);
-    if (uuidIndex >= 0) return uuidIndex;
-  }
-  return active.slideIndex;
-}
-
-export function outputSlideIndex(active: ActiveState | undefined, presentationId: string | null, slides: Slide[]): number {
-  if (!active) return -1;
-  if (active.currentSlideUuid) {
-    const uuidIndex = slides.findIndex((slide) => slideUuid(slide) === active.currentSlideUuid);
-    if (uuidIndex >= 0) return uuidIndex;
-  }
-  return active.presentationId === presentationId ? active.slideIndex : -1;
-}
-
-export function isConfirmed(expected: ActiveExpectation, actual: ActiveState): boolean {
-  return expected.presentationId === actual.presentationId && (expected.slideIndex === null || expected.slideIndex === actual.slideIndex);
-}
-
-export function remoteDisplayMode(mode: 'text' | 'preview' | 'auto', slide?: Slide): 'text' | 'preview' {
-  return mode === 'auto' ? (slideText(slide) ? 'text' : 'preview') : mode;
-}
-
 export function groupStarts(slides: Slide[]): Array<{ key: string; name: string; index: number }> {
-  return slides.reduce<Array<{ key: string; name: string; index: number }>>((all, slide, index) =>
-    all.some((group) => group.key === slide.groupKey) ? all : [...all, { key: slide.groupKey, name: slide.groupName || `그룹 ${all.length + 1}`, index }], []);
+  return slides.reduce<Array<{ key: string; name: string; index: number }>>((all, slide, index) => all.some((group) => group.key === slide.groupKey) ? all : [...all, { key: slide.groupKey, name: slide.groupName || `그룹 ${all.length + 1}`, index }], []);
 }
 
-export function relativeTarget(active: ActiveState, slides: Slide[], direction: 1 | -1, adjacentId: string | null, adjacentSlides?: Slide[]): { presentationId: string; slideIndex: number | null; optimistic: boolean } | null {
-  const targetIndex = active.slideIndex + direction;
-  if (targetIndex >= 0 && targetIndex < slides.length && active.presentationId) return { presentationId: active.presentationId, slideIndex: targetIndex, optimistic: true };
-  if (!adjacentId) return null;
-  return { presentationId: adjacentId, slideIndex: direction > 0 ? 0 : adjacentSlides?.length ? adjacentSlides.length - 1 : null, optimistic: false };
+export function remoteDisplayMode(mode: 'text' | 'preview' | 'auto', cue: Cue | null): 'text' | 'preview' {
+  return mode === 'auto' ? (cue?.text ? 'text' : 'preview') : mode;
 }
