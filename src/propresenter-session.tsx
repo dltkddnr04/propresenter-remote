@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiBase, ProPresenterClient } from './propresenter-client';
 import {
@@ -8,7 +8,7 @@ import {
 } from './propresenter';
 
 const POLLING_INTERVAL_MS = 400;
-type Connection = { status: 'connecting' | 'connected' | 'error'; error: string | null };
+export type Connection = { status: 'connecting' | 'connected' | 'error'; error: string | null };
 export type ProPresenterCommands = {
   pending: boolean; error: string | null; next: () => Promise<void>; previous: () => Promise<void>;
   triggerPresentationCue: (cueIndex: ArrangementCueIndex) => Promise<void>;
@@ -19,21 +19,61 @@ export type ProPresenterCommands = {
 export type ProPresenterSession = { base: string; client: ProPresenterClient; state: CanonicalState | null; connection: Connection; commands: ProPresenterCommands };
 const SessionContext = createContext<ProPresenterSession | null>(null);
 const sessionKey = (base: string) => ['propresenter-session', base] as const;
+const HEALTH_GRACE_MS = 5_000;
 
-async function readSnapshot(client: ProPresenterClient, revision: number, signal?: AbortSignal): Promise<CanonicalState> {
+export function connectionHealth(root: { isError: boolean; error: unknown }, state: CanonicalState | null, lastSuccessfulPollAt: number | null, now = Date.now(), diagnostic: unknown = null): Connection {
+  if (!state && lastSuccessfulPollAt === null) return { status: 'connecting', error: null };
+  const recentlyHealthy = lastSuccessfulPollAt !== null && now - lastSuccessfulPollAt < HEALTH_GRACE_MS;
+  if (root.isError && !recentlyHealthy) return { status: 'error', error: root.error instanceof Error ? root.error.message : 'ProPresenter에 연결할 수 없습니다.' };
+  if (state) return { status: 'connected', error: diagnostic instanceof Error ? diagnostic.message : null };
+  return { status: 'connecting', error: null };
+}
+
+async function readSnapshot(client: ProPresenterClient, revision: number, signal?: AbortSignal, onStatusDiagnostic?: (error: unknown | null) => void): Promise<CanonicalState> {
   // All required sources start together. A status failure is output-only, not a connection failure.
   const [position, activePlaylist, status] = await Promise.all([
-    client.presentationPosition(signal), client.activePlaylist(signal), client.slideStatus(signal).catch((error) => { if (signal?.aborted) throw error; return null; }),
+    client.presentationPosition(signal), client.activePlaylist(signal), client.slideStatus(signal).then((value) => { onStatusDiagnostic?.(null); return value; }).catch((error) => { if (signal?.aborted) throw error; onStatusDiagnostic?.(error); return null; }),
   ]);
   return normalizeCanonicalState({ revision, position, activePlaylist, status });
 }
 
 export function ProPresenterSessionProvider({ settings, children }: { settings: ConnectionSettings; children: React.ReactNode }) {
   const base = apiBase(settings); const client = useMemo(() => new ProPresenterClient(base), [base]); const queryClient = useQueryClient();
-  const revision = useRef(0); const accepted = useRef<{ base: string; state: CanonicalState | null }>({ base, state: null }); const root = useQuery({ queryKey: sessionKey(base), queryFn: async ({ signal }) => { if (accepted.current.base !== base) accepted.current = { base, state: null }; const candidate = await readSnapshot(client, ++revision.current, signal); const state = acceptCanonicalSnapshot(accepted.current.state, candidate); accepted.current.state = state; return state; }, refetchInterval: POLLING_INTERVAL_MS, refetchIntervalInBackground: false, retry: 1, retryDelay: 250 });
+  const revision = useRef(0);
+  const accepted = useRef<{ base: string; state: CanonicalState | null }>({ base, state: null });
+  const lastSuccessfulPollAt = useRef<number | null>(null);
+  const statusDiagnostic = useRef<unknown | null>(null);
+  const [, setHealthTick] = useState(0);
+  const root = useQuery({
+    queryKey: sessionKey(base),
+    queryFn: async ({ signal }) => {
+      if (accepted.current.base !== base) {
+        accepted.current = { base, state: null };
+        lastSuccessfulPollAt.current = null;
+        statusDiagnostic.current = null;
+      }
+      const candidate = await readSnapshot(client, ++revision.current, signal, (error) => { statusDiagnostic.current = error; });
+      const state = acceptCanonicalSnapshot(accepted.current.state, candidate);
+      accepted.current.state = state;
+      lastSuccessfulPollAt.current = Date.now();
+      return state;
+    },
+    refetchInterval: POLLING_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+    retry: 1,
+    retryDelay: 250,
+  });
+  useEffect(() => {
+    if (!root.isError || lastSuccessfulPollAt.current === null) return undefined;
+    const remaining = 5_000 - (Date.now() - lastSuccessfulPollAt.current);
+    if (remaining <= 0) return undefined;
+    const timer = globalThis.setTimeout(() => setHealthTick((value) => value + 1), remaining + 10);
+    return () => globalThis.clearTimeout(timer);
+  }, [root.isError, root.data?.revision]);
   const playlist = useQuery({ queryKey: ['propresenter-session-active-playlist', base, root.data?.playlistId], queryFn: ({ signal }) => client.playlist(root.data!.playlistId!, signal), enabled: Boolean(root.data?.playlistId), retry: 1, retryDelay: 250 });
-  const state = useMemo(() => root.data ? enrichPlaylistContext(root.data, playlist.data ?? null) : null, [playlist.data, root.data]);
-  const connection: Connection = root.isError ? { status: 'error', error: root.error instanceof Error ? root.error.message : 'ProPresenter에 연결할 수 없습니다.' } : state ? { status: 'connected', error: null } : { status: 'connecting', error: null };
+  const canonical = root.data ?? (accepted.current.base === base ? accepted.current.state : null);
+  const state = useMemo(() => canonical ? enrichPlaylistContext(canonical, playlist.data ?? null) : null, [canonical, playlist.data]);
+  const connection = connectionHealth(root, state, lastSuccessfulPollAt.current, Date.now(), statusDiagnostic.current);
   const pendingRef = useRef(false); const [pending, setPending] = useState(false); const [commandError, setCommandError] = useState<string | null>(null);
   const commands = useMemo<ProPresenterCommands>(() => {
     const run = async (command: () => Promise<void>) => {

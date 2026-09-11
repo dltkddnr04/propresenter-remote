@@ -25,6 +25,358 @@ export class ProPresenterApiError extends Error {
   }
 }
 
+type JsonObject = { readonly [key: string]: unknown };
+type FocusedItem = { readonly uuid: string; readonly name: string; readonly index: number };
+
+class RuntimeDecodeError extends Error {
+  constructor(readonly wrapperKey: string | null = null) {
+    super('Unsupported ProPresenter response shape');
+    this.name = 'RuntimeDecodeError';
+  }
+}
+
+const isObject = (value: unknown): value is JsonObject => typeof value === 'object' && value !== null && !Array.isArray(value);
+const has = (value: JsonObject, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+function rootShape(value: unknown): string {
+  if (Array.isArray(value)) return 'array';
+  if (value === null) return 'null';
+  return typeof value;
+}
+
+function rootKeys(value: unknown): string {
+  if (!isObject(value)) return 'none';
+  const keys = Object.keys(value);
+  return keys.length ? keys.join(', ') : 'none';
+}
+
+function rejectShape(wrapperKey?: string): never {
+  throw new RuntimeDecodeError(wrapperKey ?? null);
+}
+
+function isIdentifier(value: unknown, allowNullUuid = false): value is { readonly uuid: string | null; readonly name: string; readonly index: number } {
+  if (!isObject(value) || typeof value.name !== 'string' || !isFiniteNumber(value.index)) return false;
+  return typeof value.uuid === 'string' || (allowNullUuid && value.uuid === null);
+}
+
+function isPlaylistNode(value: unknown): value is JsonObject {
+  if (!isObject(value) || !isIdentifier(value.id) || (value.type !== 'playlist' && value.type !== 'group')) return false;
+  if (has(value, 'playlists') && !Array.isArray(value.playlists)) return false;
+  return value.type === 'playlist' || Array.isArray(value.playlists);
+}
+
+function isPlaylistTree(value: unknown): value is PlaylistTreeResponse {
+  if (!Array.isArray(value)) return false;
+  // Walk only the OpenAPI playlist-tree edge. This deliberately does not
+  // search arbitrary nested arrays for something that happens to look like a
+  // playlist.
+  const pending: unknown[] = [...value];
+  while (pending.length) {
+    const node = pending.pop();
+    if (!isPlaylistNode(node)) return false;
+    if (Array.isArray(node.playlists)) pending.push(...node.playlists);
+  }
+  return true;
+}
+
+const playlistItemTypes = new Set(['presentation', 'placeholder', 'header', 'media', 'audio', 'livevideo']);
+
+function isPlaylistItem(value: unknown): boolean {
+  if (!isObject(value) || !isIdentifier(value.id, true) || typeof value.type !== 'string' || !playlistItemTypes.has(value.type)) return false;
+  if (has(value, 'is_hidden') && typeof value.is_hidden !== 'boolean') return false;
+  if (has(value, 'is_pco') && typeof value.is_pco !== 'boolean') return false;
+  if (!has(value, 'presentation_info') || value.presentation_info === null) return true;
+  if (!isObject(value.presentation_info) || typeof value.presentation_info.presentation_uuid !== 'string') return false;
+  return !has(value.presentation_info, 'arrangement_name') || typeof value.presentation_info.arrangement_name === 'string';
+}
+
+function isPlaylistResponse(value: unknown): value is PlaylistResponse {
+  return isObject(value) && isIdentifier(value.id) && Array.isArray(value.items) && value.items.every(isPlaylistItem);
+}
+
+function normalizeLibraryItem(value: unknown): FocusedItem | null {
+  if (isObject(value) && typeof value.uuid === 'string' && typeof value.name === 'string' && (!has(value, 'index') || isFiniteNumber(value.index))) {
+    return { uuid: value.uuid, name: value.name, index: isFiniteNumber(value.index) ? value.index : 0 };
+  }
+  // Older ProPresenter builds used the shared item envelope for library
+  // presentations. Convert that known shape to the official focused-item
+  // payload before it reaches the generated/domain types.
+  if (isObject(value)) {
+    const identifier = value.id;
+    if (isIdentifier(identifier, true) && typeof identifier.uuid === 'string') {
+      return { uuid: identifier.uuid, name: identifier.name, index: identifier.index };
+    }
+  }
+  return null;
+}
+
+function normalizedLibraryItems(value: unknown): FocusedItem[] | null {
+  if (!Array.isArray(value)) return null;
+  const items = value.map(normalizeLibraryItem);
+  return items.every((item): item is FocusedItem => item !== null) ? items : null;
+}
+
+function isLibraryItem(value: unknown): boolean {
+  return isObject(value) && typeof value.uuid === 'string' && typeof value.name === 'string' && (!has(value, 'index') || isFiniteNumber(value.index));
+}
+
+function isLibrariesResponse(value: unknown): value is LibrariesResponse {
+  return Array.isArray(value) && value.every((item) => isObject(item) && isIdentifier(item.id));
+}
+
+function isLibraryResponse(value: unknown): value is LibraryResponse {
+  if (!isObject(value) || !Array.isArray(value.items) || !value.items.every(isLibraryItem)) return false;
+  return !has(value, 'updateType') || value.updateType === 'all' || value.updateType === 'add' || value.updateType === 'remove';
+}
+
+function isActiveLayer(value: unknown): boolean {
+  if (!isObject(value) || !has(value, 'playlist') || !has(value, 'item')) return false;
+  if (value.playlist !== null && !isIdentifier(value.playlist)) return false;
+  return value.item === null || isIdentifier(value.item);
+}
+
+function isActivePlaylistResponse(value: unknown): value is PlaylistActiveResponse {
+  if (!isObject(value)) return false;
+  if (!Object.keys(value).every((key) => key === 'presentation' || key === 'announcements')) return false;
+  if (!has(value, 'presentation') && !has(value, 'announcements')) return false;
+  return (!has(value, 'presentation') || value.presentation === null || isActiveLayer(value.presentation))
+    && (!has(value, 'announcements') || value.announcements === null || isActiveLayer(value.announcements));
+}
+
+function isPresentationIndex(value: unknown): boolean {
+  if (!isObject(value) || !has(value, 'presentation_id') || !isFiniteNumber(value.index)) return false;
+  return isIdentifier(value.presentation_id);
+}
+
+function isPresentationPosition(value: unknown): value is PresentationPositionResponse {
+  if (!isObject(value) || !Object.keys(value).every((key) => key === 'presentation_index')) return false;
+  return !has(value, 'presentation_index') || value.presentation_index === null || isPresentationIndex(value.presentation_index);
+}
+
+function isSlide(value: unknown): boolean {
+  return isObject(value) && typeof value.uuid === 'string' && typeof value.text === 'string' && typeof value.notes === 'string';
+}
+
+function isSlideStatus(value: unknown): value is SlideStatusResponse {
+  if (!isObject(value) || !Object.keys(value).every((key) => key === 'current' || key === 'next')) return false;
+  return (!has(value, 'current') || value.current === null || isSlide(value.current))
+    && (!has(value, 'next') || value.next === null || isSlide(value.next));
+}
+
+function isPresentation(value: unknown): boolean {
+  if (!isObject(value) || !Array.isArray(value.groups)) return false;
+  if (has(value, 'id') && value.id !== undefined && value.id !== null && !isIdentifier(value.id)) return false;
+  if (has(value, 'has_timeline') && typeof value.has_timeline !== 'boolean') return false;
+  if (has(value, 'destination') && value.destination !== 'presentation' && value.destination !== 'announcements') return false;
+  return value.groups.every((group) => isObject(group) && typeof group.name === 'string' && Array.isArray(group.slides)
+    && group.slides.every((slide) => isObject(slide) && typeof slide.text === 'string' && typeof slide.notes === 'string' && typeof slide.label === 'string'));
+}
+
+function isActivePresentationResponse(value: unknown): value is ActivePresentationResponse {
+  if (!isObject(value) || !Object.keys(value).every((key) => key === 'presentation')) return false;
+  return !has(value, 'presentation') || value.presentation === null || isPresentation(value.presentation);
+}
+
+function isPresentationResponse(value: unknown): value is PresentationResponse {
+  return isPresentation(value);
+}
+
+function playlistIdFromPath(path: string): JsonObject | null {
+  const resource = path.split('?')[0].split('/').pop();
+  if (!resource) return null;
+  try {
+    const id = decodeURIComponent(resource);
+    return { uuid: id, name: id, index: 0 };
+  } catch {
+    return null;
+  }
+}
+
+function playlistResponseFromItems(items: unknown, id: unknown, path: string): PlaylistResponse | null {
+  if (!Array.isArray(items) || !items.every(isPlaylistItem)) return null;
+  const playlistId = isIdentifier(id) ? id : playlistIdFromPath(path);
+  if (!playlistId) return null;
+  return { id: playlistId, items } as PlaylistResponse;
+}
+
+function playlistResponseFromKnownContainer(value: JsonObject, path: string): PlaylistResponse | null {
+  if (isPlaylistResponse(value)) return value;
+  if (has(value, 'playlist')) {
+    if (isPlaylistResponse(value.playlist)) return value.playlist;
+    if (isObject(value.playlist)) {
+      if (isPlaylistResponse(value.playlist)) return value.playlist;
+      const nestedItems = has(value.playlist, 'items') ? value.playlist.items : value.playlist.playlist_items;
+      const nested = playlistResponseFromItems(nestedItems, value.playlist.id ?? value.id, path);
+      if (nested) return nested;
+    }
+  }
+  if (has(value, 'playlist_items')) {
+    if (isPlaylistResponse(value.playlist_items)) return value.playlist_items;
+    const nested = playlistResponseFromItems(value.playlist_items, value.id, path);
+    if (nested) return nested;
+  }
+  if (has(value, 'items')) return playlistResponseFromItems(value.items, value.id, path);
+  return null;
+}
+
+function libraryResponseFromItems(items: unknown): LibraryResponse | null {
+  const normalized = normalizedLibraryItems(items);
+  if (!normalized) return null;
+  return { updateType: 'all', items: normalized } as LibraryResponse;
+}
+
+function libraryResponseFromKnownContainer(value: JsonObject): LibraryResponse | null {
+  if (isLibraryResponse(value)) return { ...value, updateType: value.updateType ?? 'all' } as LibraryResponse;
+  if (has(value, 'library')) {
+    if (isLibraryResponse(value.library)) return { ...value.library, updateType: value.library.updateType ?? 'all' } as LibraryResponse;
+    if (isObject(value.library)) {
+      const nestedItems = has(value.library, 'items') ? value.library.items : value.library.presentations;
+      const nested = libraryResponseFromItems(nestedItems);
+      if (nested) return nested;
+    }
+  }
+  if (has(value, 'presentations')) {
+    const nested = libraryResponseFromItems(value.presentations);
+    if (nested) return nested;
+  }
+  if (has(value, 'items')) return libraryResponseFromItems(value.items);
+  return null;
+}
+
+function decodePlaylistTree(value: unknown): PlaylistTreeResponse {
+  if (isPlaylistTree(value)) return value;
+  if (!isObject(value)) rejectShape();
+  if (has(value, 'data')) {
+    if (isPlaylistTree(value.data)) return value.data;
+    if (isObject(value.data) && isPlaylistTree(value.data.playlists)) return value.data.playlists;
+    rejectShape('data');
+  }
+  if (has(value, 'playlists') && isPlaylistTree(value.playlists)) return value.playlists;
+  rejectShape(rootKeys(value));
+}
+
+function decodePlaylist(value: unknown, path: string): PlaylistResponse {
+  if (isPlaylistResponse(value)) return value;
+  if (!isObject(value)) rejectShape();
+  if (has(value, 'data')) {
+    if (isPlaylistResponse(value.data)) return value.data;
+    if (isObject(value.data)) {
+      const nested = playlistResponseFromKnownContainer(value.data, path);
+      if (nested) return nested;
+    }
+    rejectShape('data');
+  }
+  const known = playlistResponseFromKnownContainer(value, path);
+  if (known) return known;
+  rejectShape(rootKeys(value));
+}
+
+function decodeLibraries(value: unknown): LibrariesResponse {
+  if (isLibrariesResponse(value)) return value;
+  if (!isObject(value)) rejectShape();
+  if (has(value, 'data')) {
+    if (isLibrariesResponse(value.data)) return value.data;
+    if (isObject(value.data) && isLibrariesResponse(value.data.libraries)) return value.data.libraries;
+    rejectShape('data');
+  }
+  if (has(value, 'libraries') && isLibrariesResponse(value.libraries)) return value.libraries;
+  rejectShape(rootKeys(value));
+}
+
+function decodeLibrary(value: unknown): LibraryResponse {
+  if (isLibraryResponse(value)) return { ...value, updateType: value.updateType ?? 'all' } as LibraryResponse;
+  if (Array.isArray(value)) {
+    const raw = libraryResponseFromItems(value);
+    if (raw) return raw;
+    rejectShape();
+  }
+  if (!isObject(value)) rejectShape();
+  if (has(value, 'data')) {
+    if (isLibraryResponse(value.data)) return { ...value.data, updateType: value.data.updateType ?? 'all' } as LibraryResponse;
+    if (isObject(value.data)) {
+      const nested = libraryResponseFromKnownContainer(value.data);
+      if (nested) return nested;
+    }
+    rejectShape('data');
+  }
+  const known = libraryResponseFromKnownContainer(value);
+  if (known) return known;
+  rejectShape(rootKeys(value));
+}
+
+function decodePresentationPosition(value: unknown): PresentationPositionResponse {
+  if (isPresentationPosition(value)) return value;
+  if (!isObject(value)) rejectShape();
+  if (has(value, 'data')) {
+    if (isPresentationPosition(value.data)) return value.data;
+    if (isObject(value.data) && has(value.data, 'slide_index') && isPresentationPosition(value.data.slide_index)) return value.data.slide_index;
+    rejectShape('data');
+  }
+  if (has(value, 'slide_index') && isPresentationPosition(value.slide_index)) return value.slide_index;
+  rejectShape(rootKeys(value));
+}
+
+function decodeActivePlaylist(value: unknown): PlaylistActiveResponse {
+  if (isActivePlaylistResponse(value)) return value;
+  if (!isObject(value)) rejectShape();
+  if (has(value, 'data')) {
+    if (isActivePlaylistResponse(value.data)) return value.data;
+    if (isObject(value.data)) {
+      for (const key of ['active_playlist', 'playlist_active', 'playlist']) {
+        if (has(value.data, key) && isActivePlaylistResponse(value.data[key])) return value.data[key];
+      }
+    }
+    rejectShape('data');
+  }
+  for (const key of ['active_playlist', 'playlist_active', 'playlist']) {
+    if (has(value, key) && isActivePlaylistResponse(value[key])) return value[key];
+  }
+  rejectShape(rootKeys(value));
+}
+
+function decodeSlideStatus(value: unknown): SlideStatusResponse {
+  if (isSlideStatus(value)) return value;
+  if (!isObject(value)) rejectShape();
+  if (has(value, 'data')) {
+    if (isSlideStatus(value.data)) return value.data;
+    if (isObject(value.data)) {
+      for (const key of ['status', 'slide', 'status_slide', 'slide_status']) {
+        if (has(value.data, key) && isSlideStatus(value.data[key])) return value.data[key];
+      }
+    }
+    rejectShape('data');
+  }
+  for (const key of ['status', 'slide', 'status_slide', 'slide_status']) {
+    if (has(value, key) && isSlideStatus(value[key])) return value[key];
+  }
+  rejectShape(rootKeys(value));
+}
+
+function decodeActivePresentation(value: unknown): ActivePresentationResponse {
+  if (isActivePresentationResponse(value)) return value;
+  if (!isObject(value)) rejectShape();
+  if (has(value, 'data')) {
+    if (isActivePresentationResponse(value.data)) return value.data;
+    if (isObject(value.data) && has(value.data, 'active_presentation') && isActivePresentationResponse(value.data.active_presentation)) return value.data.active_presentation;
+    rejectShape('data');
+  }
+  if (has(value, 'active_presentation') && isActivePresentationResponse(value.active_presentation)) return value.active_presentation;
+  rejectShape(rootKeys(value));
+}
+
+function decodePresentation(value: unknown): PresentationResponse {
+  if (isPresentationResponse(value)) return value;
+  if (!isObject(value)) rejectShape();
+  if (has(value, 'data')) {
+    if (isPresentationResponse(value.data)) return value.data;
+    if (isObject(value.data) && has(value.data, 'presentation') && isPresentationResponse(value.data.presentation)) return value.data.presentation;
+    rejectShape('data');
+  }
+  if (has(value, 'presentation') && isPresentationResponse(value.presentation)) return value.presentation;
+  rejectShape(rootKeys(value));
+}
+
 export function isNativeProxy(): boolean {
   if (typeof document === 'undefined') return false;
   return document.cookie.split(';').some((part) => part.trim() === 'propresenter-native=1');
@@ -66,8 +418,35 @@ export class ProPresenterClient {
 
   private async getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
     const response = await this.request(path, signal);
-    try { return await response.json() as T; }
+    let value: unknown;
+    try { value = await response.json(); }
     catch (error) { if (signal?.aborted) throw error; throw new ProPresenterApiError(`ProPresenter 응답을 읽을 수 없습니다: ${path}`, path, response.status, 'decode'); }
+    try {
+      return (this.decoderFor(path)(value, path) as T);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const wrapperKey = error instanceof RuntimeDecodeError ? error.wrapperKey : null;
+      const detectedWrapperKey = wrapperKey || rootKeys(value);
+      throw new ProPresenterApiError(
+        `ProPresenter 응답을 디코딩할 수 없습니다: ${path} (root shape: ${rootShape(value)}; detected wrapper key: ${detectedWrapperKey})`,
+        path,
+        response.status,
+        'decode',
+      );
+    }
+  }
+
+  private decoderFor(path: string): (value: unknown, path: string) => unknown {
+    if (path.startsWith('/v1/presentation/slide_index')) return decodePresentationPosition;
+    if (path.startsWith('/v1/playlist/active')) return decodeActivePlaylist;
+    if (path.startsWith('/v1/status/slide')) return decodeSlideStatus;
+    if (path.startsWith('/v1/presentation/active')) return decodeActivePresentation;
+    if (path === '/v1/playlists?chunked=false') return (value) => decodePlaylistTree(value);
+    if (path.startsWith('/v1/playlist/')) return decodePlaylist;
+    if (path === '/v1/libraries?chunked=false') return (value) => decodeLibraries(value);
+    if (path.startsWith('/v1/library/')) return (value) => decodeLibrary(value);
+    if (path.startsWith('/v1/presentation/')) return (value) => decodePresentation(value);
+    return (value) => value;
   }
 
   private async command(path: string, signal?: AbortSignal): Promise<void> {
