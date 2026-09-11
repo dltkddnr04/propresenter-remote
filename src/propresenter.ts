@@ -1,250 +1,109 @@
-export type ApiObject = Record<string, any>;
+import type {
+  ActivePresentationResponse,
+  LibrariesResponse,
+  LibraryResponse,
+  PlaylistActiveResponse,
+  PlaylistResponse,
+  PlaylistTreeResponse,
+  PresentationPositionResponse,
+  PresentationResponse,
+  SlideStatusResponse,
+} from './propresenter-client';
 
 export type ConnectionSettings = { host: string; port: number };
+export type PresentationCueIndex = number & { readonly __index: 'presentation-cue' };
+export type ArrangementCueIndex = number & { readonly __index: 'arrangement-cue' };
+export type PlaylistItemIndex = number & { readonly __index: 'playlist-item' };
+export type PresentationGroupIndex = number & { readonly __index: 'presentation-group' };
+
+const nonNegativeIndex = (value: number | null | undefined): number | null => Number.isInteger(value) && value >= 0 ? value : null;
+export const asPresentationCueIndex = (value: number) => nonNegativeIndex(value) as PresentationCueIndex | null;
+export const asArrangementCueIndex = (value: number) => nonNegativeIndex(value) as ArrangementCueIndex | null;
+export const asPlaylistItemIndex = (value: number) => nonNegativeIndex(value) as PlaylistItemIndex | null;
 
 export type Cue = { uuid: string | null; text: string; notes: string };
-
+export type PlaylistItemKind = 'presentation' | 'placeholder' | 'header' | 'media' | 'audio' | 'livevideo';
 export type PlaylistItemContext = {
-  source: 'playlist';
-  playlistId: string;
-  playlistItemId: string;
-  playlistItemIndex: number;
-  presentationId: string | null;
-  arrangementId: string | null;
-  kind: string;
-  name: string;
-  cacheKey: string;
+  source: 'playlist'; playlistId: string; playlistName: string; playlistItemId: string; playlistItemIndex: PlaylistItemIndex;
+  presentationId: string | null; arrangementName: string | null; kind: PlaylistItemKind; name: string; cacheKey: string;
 };
-
-export type LibraryPresentationContext = {
-  source: 'library';
-  libraryId: string;
-  presentationId: string;
-  name: string;
-  cacheKey: string;
-};
-
+export type LibraryPresentationContext = { source: 'library'; libraryId: string; presentationId: string; name: string; cacheKey: string };
 export type PresentationContext = PlaylistItemContext | LibraryPresentationContext;
 
 export type CanonicalState = {
-  playlistId: string | null;
-  playlistItemId: string | null;
-  playlistItemIndex: number | null;
-  presentationId: string | null;
-  slideIndex: number;
-  currentCue: Cue | null;
-  nextCue: Cue | null;
-  playlistItem: PlaylistItemContext | null;
+  revision: number; observedAt: number;
+  playlistId: string | null; playlistName: string | null; playlistItemId: string | null; playlistItemIndex: PlaylistItemIndex | null;
+  presentationId: string | null; presentationName: string | null; arrangementName: string | null;
+  /** Pair is read only from /v1/presentation/slide_index. */ slideIndex: ArrangementCueIndex | null;
+  currentCue: Cue | null; nextCue: Cue | null;
+  /** Playlist-scoped identity, including arrangement name, when its detail has loaded. */ playlistItem: PlaylistItemContext | null;
 };
+export type Playlist = { id: string; name: string; depth: number };
+export type Library = { id: string; name: string };
+export type PlaylistItem = { id: string | null; index: PlaylistItemIndex; name: string; type: PlaylistItemKind; presentationId: string | null; arrangementName: string | null };
+export type LibraryPresentation = { id: string; name: string };
+export type Slide = { cueIndex: PresentationCueIndex | ArrangementCueIndex; text: string; notes: string; label: string; groupName: string; groupKey: string; groupColor: string | null; groupIndex: PresentationGroupIndex };
 
-export type Slide = ApiObject & { groupName: string; groupKey: string; groupColor: string | null; flatIndex: number };
+export function acceptCanonicalSnapshot(previous: CanonicalState | null, candidate: CanonicalState): CanonicalState {
+  return previous && candidate.revision < previous.revision ? previous : candidate;
+}
 
-const requestTimeoutMs = 2_500;
+const nameOf = (id: { name: string } | undefined, fallback: string) => id?.name || fallback;
+const identifier = (id: { uuid: string; name: string; index: number } | undefined | null) => id?.uuid || null;
+const cue = (value: SlideStatusResponse['current'] | undefined): Cue | null => value ? { uuid: value.uuid || null, text: value.text.trim(), notes: value.notes.trim() } : null;
 
-export function isNativeProxy(): boolean {
-  if (typeof document === 'undefined') return false;
-  return document.cookie.split(';').some((part) => {
-    const [name, ...value] = part.trim().split('=');
-    return name === 'propresenter-native' && value.join('=') === '1';
+/** The position pair is transport-authoritative; no active-presentation ID is merged into it. */
+export function normalizeCanonicalState(input: { revision: number; position: PresentationPositionResponse; activePlaylist: PlaylistActiveResponse; status: SlideStatusResponse | null }): CanonicalState {
+  const position = input.position.presentation_index ?? null;
+  const active = input.activePlaylist.presentation;
+  return {
+    revision: input.revision, observedAt: Date.now(), playlistId: identifier(active?.playlist), playlistName: active?.playlist?.name ?? null,
+    playlistItemId: identifier(active?.item), playlistItemIndex: asPlaylistItemIndex(active?.item?.index ?? -1),
+    presentationId: position?.presentation_id?.uuid ?? null, presentationName: position?.presentation_id?.name ?? null,
+    arrangementName: null, slideIndex: position ? asArrangementCueIndex(position.index) : null,
+    currentCue: cue(input.status?.current), nextCue: cue(input.status?.next), playlistItem: null,
+  };
+}
+
+export function normalizePlaylistTree(response: PlaylistTreeResponse): Playlist[] {
+  const result: Playlist[] = [];
+  const walk = (nodes: PlaylistTreeResponse, depth: number) => nodes.forEach((node) => {
+    const id = identifier(node.id); if (node.type === 'playlist' && id) result.push({ id, name: nameOf(node.id, '이름 없는 재생목록'), depth });
+    if ('playlists' in node && node.playlists) walk(node.playlists, depth + 1);
   });
+  walk(response, 0); return result;
 }
-
-export function apiBase(settings: ConnectionSettings): string {
-  return isNativeProxy() ? '' : `http://${settings.host}:${settings.port}`;
+export function normalizePlaylistItems(response: PlaylistResponse): PlaylistItem[] {
+  return response.items.map((item) => ({ id: identifier(item.id), index: asPlaylistItemIndex(item.id.index)!, name: nameOf(item.id, '이름 없는 항목'), type: item.type, presentationId: item.presentation_info?.presentation_uuid ?? null, arrangementName: item.presentation_info?.arrangement_name ?? null }));
 }
-
-export async function api(base: string, path: string, signal?: AbortSignal): Promise<unknown> {
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  signal?.addEventListener('abort', abort, { once: true });
-  const timeout = globalThis.setTimeout(abort, requestTimeoutMs);
-  try {
-    const response = await fetch(`${base}${path}`, { cache: 'no-store', headers: { Accept: 'application/json' }, signal: controller.signal });
-    if (!response.ok) throw new Error(`${response.status} ${path}`);
-    const text = await response.text();
-    try { return JSON.parse(text); } catch { return text; }
-  } finally {
-    globalThis.clearTimeout(timeout);
-    signal?.removeEventListener('abort', abort);
-  }
+export function playlistItemContext(playlist: Pick<Playlist, 'id' | 'name'>, item: PlaylistItem): PlaylistItemContext | null {
+  if (!item.id) return null;
+  return { source: 'playlist', playlistId: playlist.id, playlistName: playlist.name, playlistItemId: item.id, playlistItemIndex: item.index, presentationId: item.presentationId, arrangementName: item.arrangementName, kind: item.type, name: item.name, cacheKey: `${playlist.id}:${item.id}:${item.index}:${item.presentationId ?? item.type}:${item.arrangementName ?? 'default'}` };
 }
+export function normalizeLibraries(response: LibrariesResponse): Library[] { return response.map((item) => ({ id: item.id.uuid, name: item.id.name })); }
+export function normalizeLibraryItems(response: LibraryResponse): LibraryPresentation[] { return response.items.map((item) => ({ id: item.uuid, name: item.name })); }
+export function libraryPresentationContext(libraryId: string, item: LibraryPresentation): LibraryPresentationContext { return { source: 'library', libraryId, presentationId: item.id, name: item.name, cacheKey: `${libraryId}:${item.id}` }; }
 
-export function unwrap(value: unknown): unknown { return (value as ApiObject)?.data ?? value; }
-
-export function listArray(value: unknown): ApiObject[] {
-  if (Array.isArray(value)) return value;
-  if (!value || typeof value !== 'object') return [];
-  const object = value as ApiObject;
-  for (const key of ['data', 'items', 'playlist_items', 'contents', 'children', 'playlists', 'libraries', 'library', 'presentations']) {
-    if (Array.isArray(object[key])) return object[key];
-    if (object[key] && typeof object[key] === 'object') {
-      const nested = listArray(object[key]);
-      if (nested.length) return nested;
-    }
-  }
-  return [];
+export function enrichPlaylistContext(state: CanonicalState, response: PlaylistResponse | null): CanonicalState {
+  if (!response || !state.playlistId || response.id.uuid !== state.playlistId || !state.playlistItemId) return state;
+  const item = normalizePlaylistItems(response).find((candidate) => candidate.id === state.playlistItemId && candidate.index === state.playlistItemIndex);
+  const context = item ? playlistItemContext({ id: response.id.uuid, name: response.id.name }, item) : null;
+  return { ...state, arrangementName: context?.arrangementName ?? null, playlistItem: context };
 }
-
-function identifier(value: unknown): string | null {
-  if (typeof value === 'string' && value) return value;
-  if (!value || typeof value !== 'object') return null;
-  const object = value as ApiObject;
-  return identifier(object.uuid) || identifier(object.id) || null;
-}
-
-function indexValue(value: unknown): number | null {
-  const index = Number(value);
-  return Number.isInteger(index) && index >= 0 ? index : null;
-}
-
-export function objectId(value?: ApiObject): string | null {
-  if (!value) return null;
-  return identifier(value.id) || identifier(value.uuid) || identifier(value.playlist_id) || identifier(value.presentation_info?.presentation_uuid) || null;
-}
-
-export function objectName(value?: ApiObject, fallback = '이름 없는 항목'): string {
-  return value?.id?.name || value?.name || value?.title || value?.playlist_id?.name || value?.presentation_info?.name || fallback;
-}
-
-export function playlistItemId(item?: ApiObject): string | null {
-  if (!item) return null;
-  return identifier(item.id) || identifier(item.uuid) || identifier(item.playlist_item_id) || null;
-}
-
-export function presentationUuid(item?: ApiObject): string | null {
-  if (!item) return null;
-  return identifier(item.presentation_info?.presentation_uuid) || identifier(item.presentation_info?.presentation_id) || identifier(item.presentation?.id) || identifier(item.presentation_id) || null;
-}
-
-function arrangementUuid(item?: ApiObject): string | null {
-  if (!item) return null;
-  return identifier(item.presentation_info?.arrangement_uuid) || identifier(item.presentation_info?.arrangement_id) || identifier(item.presentation_info?.arrangement) || identifier(item.arrangement_uuid) || identifier(item.arrangement_id) || identifier(item.arrangement) || null;
-}
-
-export function playlistItems(data: unknown): ApiObject[] {
-  const object = unwrap(data) as ApiObject;
-  return object?.playlist?.items || listArray(object);
-}
-
-export function playlistItemContext(playlistId: string, item: ApiObject, fallbackIndex: number): PlaylistItemContext | null {
-  const id = playlistItemId(item);
-  if (!id) return null;
-  const itemIndex = indexValue(item.index) ?? fallbackIndex;
-  const presentationId = presentationUuid(item);
-  const arrangementId = arrangementUuid(item);
-  return {
-    source: 'playlist', playlistId, playlistItemId: id, playlistItemIndex: itemIndex, presentationId, arrangementId,
-    kind: String(item.type || item.presentation_info?.type || 'unknown'), name: objectName(item),
-    cacheKey: [playlistId, id, arrangementId || 'default', presentationId || item.type || 'item'].join(':'),
-  };
-}
-
-export function libraryPresentationContext(libraryId: string, item: ApiObject): LibraryPresentationContext | null {
-  const presentationId = presentationUuid(item) || objectId(item);
-  if (!presentationId) return null;
-  return { source: 'library', libraryId, presentationId, name: objectName(item), cacheKey: [libraryId, presentationId].join(':') };
-}
-
-export function parsePlaylistActive(data: unknown): Pick<CanonicalState, 'playlistId' | 'playlistItemId' | 'playlistItemIndex'> {
-  const value = unwrap(data) as ApiObject;
-  const presentation = value?.presentation || value;
-  const item = presentation?.item || value?.item;
-  return {
-    playlistId: identifier(presentation?.playlist?.uuid) || identifier(value?.playlist?.uuid) || identifier(value?.playlist),
-    playlistItemId: identifier(item?.uuid) || identifier(item?.id) || null,
-    playlistItemIndex: indexValue(item?.index),
-  };
-}
-
-export function parsePresentationPosition(data: unknown): Pick<CanonicalState, 'presentationId' | 'slideIndex'> {
-  const object = unwrap(data) as ApiObject;
-  const position = object?.presentation_index || object?.slide_index || object;
-  return {
-    presentationId: identifier(position?.presentation_id) || identifier(position?.presentation?.id) || null,
-    slideIndex: indexValue(position?.index ?? object?.index ?? object?.slide_index?.index) ?? -1,
-  };
-}
-
-export function activePresentationId(data: unknown): string | null {
-  const object = unwrap(data) as ApiObject;
-  return identifier(object?.presentation?.id) || identifier(object?.presentation?.item) || identifier(object?.presentation?.uuid) || identifier(object?.id) || identifier(object?.uuid) || null;
-}
-
-function parseCue(value: unknown): Cue | null {
-  if (!value || typeof value !== 'object') return null;
-  const cue = value as ApiObject;
-  return { uuid: identifier(cue.uuid) || identifier(cue.id) || null, text: String(cue.text || '').replace(/\s+/g, ' ').trim(), notes: String(cue.notes || '').trim() };
-}
-
-export function parseStatusCues(data: unknown): Pick<CanonicalState, 'currentCue' | 'nextCue'> {
-  const value = unwrap(data) as ApiObject;
-  const source = value?.slide || value?.data || value;
-  return { currentCue: parseCue(source?.current), nextCue: parseCue(source?.next) };
-}
-
-export async function fetchCanonicalState(base: string, signal?: AbortSignal): Promise<CanonicalState> {
-  const [positionData, playlistData, statusData] = await Promise.all([
-    api(base, '/v1/presentation/slide_index?chunked=false', signal),
-    api(base, '/v1/playlist/active?chunked=false', signal),
-    api(base, '/v1/status/slide?chunked=false', signal).catch(() => null),
-  ]);
-  const position = parsePresentationPosition(positionData);
-  const presentationId = position.presentationId || activePresentationId(await api(base, '/v1/presentation/active?chunked=false', signal));
-  return { ...parsePlaylistActive(playlistData), presentationId, slideIndex: position.slideIndex, ...parseStatusCues(statusData), playlistItem: null };
-}
-
-export async function executeCommand<T>(send: () => Promise<void>, refresh: () => Promise<T>): Promise<T> {
-  await send();
-  return refresh();
-}
-
-export function withPlaylistItemContext(state: CanonicalState, items: ApiObject[]): CanonicalState {
-  if (!state.playlistId || !state.playlistItemId) return state;
-  const index = items.findIndex((item) => playlistItemId(item) === state.playlistItemId);
-  return { ...state, playlistItem: index >= 0 ? playlistItemContext(state.playlistId, items[index], index) : null };
-}
-
 export function isCurrentContext(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): boolean {
-  if (!state || !context || !context.presentationId || state.presentationId !== context.presentationId) return false;
-  return context.source === 'library' || (state.playlistId === context.playlistId && state.playlistItemId === context.playlistItemId);
+  return Boolean(state && context?.source === 'playlist' && state.playlistId === context.playlistId && state.playlistItemId === context.playlistItemId && state.playlistItemIndex === context.playlistItemIndex && state.presentationId === context.presentationId);
 }
+export function currentCueIndex(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): ArrangementCueIndex | null { return isCurrentContext(state, context) ? state!.slideIndex : null; }
+export function canTriggerPresentationCue(state: CanonicalState | null | undefined, context: PresentationContext): boolean { return context.source === 'library' || isCurrentContext(state, context); }
 
-export function currentCueIndex(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): number {
-  return isCurrentContext(state, context) ? state!.slideIndex : -1;
+export function flattenSlides(response: PresentationResponse | ActivePresentationResponse, scope: 'presentation' | 'active-arrangement'): Slide[] {
+  const candidate: unknown = response && typeof response === 'object' && 'presentation' in response ? response.presentation : response;
+  if (!candidate || typeof candidate !== 'object' || !('groups' in candidate) || !Array.isArray(candidate.groups)) return [];
+  const presentation = candidate as { groups: ReadonlyArray<{ name: string; color: unknown; slides: ReadonlyArray<{ text: string; notes: string; label: string }> }> };
+  let cueIndex = 0;
+  return presentation.groups.flatMap((group, groupNumber) => group.slides.map((slide) => ({ cueIndex: (scope === 'active-arrangement' ? asArrangementCueIndex : asPresentationCueIndex)(cueIndex++)!, text: slide.text, notes: slide.notes, label: slide.label, groupName: group.name, groupKey: `${groupNumber}:${group.name}`, groupColor: normalizeGroupColor(group.color), groupIndex: groupNumber as PresentationGroupIndex })));
 }
-
-export function flattenSlides(data: unknown): Slide[] {
-  const presentation = (unwrap(data) as ApiObject)?.presentation || unwrap(data) as ApiObject;
-  return (presentation?.groups || []).flatMap((group: ApiObject, groupIndex: number) =>
-    (group.slides || []).map((slide: ApiObject) => ({ ...slide, groupName: group.name || '', groupKey: identifier(group.uuid) || identifier(group.id) || `group-${groupIndex}`, groupColor: normalizeGroupColor(group.groupColor || group.group_color || group.color), flatIndex: 0 })),
-  ).map((slide: Slide, index: number) => ({ ...slide, flatIndex: index }));
-}
-
-export function slideText(slide?: Slide): string { return String(slide?.text || '').replace(/\s+/g, ' ').trim(); }
-
-export function normalizeGroupColor(value: unknown): string | null {
-  if (typeof value === 'string') {
-    const parts = value.trim().split(/[\s,]+/).map(Number);
-    if (parts.length >= 3 && parts.slice(0, 3).every(Number.isFinite)) {
-      const [red, green, blue] = parts;
-      const alpha = Number.isFinite(parts[3]) ? parts[3] : 1;
-      const scale = Math.max(red, green, blue) <= 1 ? 255 : 1;
-      return `rgba(${Math.round(red * scale)}, ${Math.round(green * scale)}, ${Math.round(blue * scale)}, ${Math.max(0, Math.min(1, alpha))})`;
-    }
-    return value.trim() || null;
-  }
-  if (!value || typeof value !== 'object') return null;
-  const color = value as ApiObject;
-  const red = Number(color.red ?? color.r); const green = Number(color.green ?? color.g); const blue = Number(color.blue ?? color.b);
-  if (![red, green, blue].every(Number.isFinite)) return null;
-  const alpha = Number(color.alpha ?? color.a ?? 1); const scale = Math.max(red, green, blue) <= 1 ? 255 : 1;
-  return `rgba(${Math.round(red * scale)}, ${Math.round(green * scale)}, ${Math.round(blue * scale)}, ${Math.max(0, Math.min(1, Number.isFinite(alpha) ? alpha : 1))})`;
-}
-
-export function groupStarts(slides: Slide[]): Array<{ key: string; name: string; index: number }> {
-  return slides.reduce<Array<{ key: string; name: string; index: number }>>((all, slide, index) => all.some((group) => group.key === slide.groupKey) ? all : [...all, { key: slide.groupKey, name: slide.groupName || `그룹 ${all.length + 1}`, index }], []);
-}
-
-export function remoteDisplayMode(mode: 'text' | 'preview' | 'auto', cue: Cue | null): 'text' | 'preview' {
-  return mode === 'auto' ? (cue?.text ? 'text' : 'preview') : mode;
-}
+export function slideText(slide?: Slide): string { return slide?.text.replace(/\s+/g, ' ').trim() ?? ''; }
+export function groupStarts(slides: Slide[]): Array<{ key: string; name: string; index: PresentationGroupIndex; cueIndex: ArrangementCueIndex }> { return slides.reduce<Array<{ key: string; name: string; index: PresentationGroupIndex; cueIndex: ArrangementCueIndex }>>((all, slide) => all.some((group) => group.key === slide.groupKey) ? all : [...all, { key: slide.groupKey, name: slide.groupName || `그룹 ${all.length + 1}`, index: slide.groupIndex, cueIndex: slide.cueIndex as ArrangementCueIndex }], []); }
+export function normalizeGroupColor(value: unknown): string | null { if (!value || typeof value !== 'object') return null; const color = value as { red?: number; green?: number; blue?: number; alpha?: number }; if (![color.red, color.green, color.blue].every((component) => typeof component === 'number')) return null; const scale = Math.max(color.red!, color.green!, color.blue!) <= 1 ? 255 : 1; return `rgba(${Math.round(color.red! * scale)}, ${Math.round(color.green! * scale)}, ${Math.round(color.blue! * scale)}, ${Math.max(0, Math.min(1, color.alpha ?? 1))})`; }
+export function remoteDisplayMode(mode: 'text' | 'preview' | 'auto', current: Cue | null): 'text' | 'preview' { return mode === 'auto' ? (current?.text ? 'text' : 'preview') : mode; }
