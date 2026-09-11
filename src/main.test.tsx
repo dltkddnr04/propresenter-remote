@@ -45,10 +45,15 @@ describe('application bootstrap integration', () => {
       appRoot = null;
     }
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   async function mountApp(permissionQuery: () => Promise<PermissionStatus>): Promise<string[]> {
     const requests: string[] = [];
+    let rootQueryFnRuns = 0;
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      if (args[0] === '[PP-DIAG] root useQuery queryFn entry') rootQueryFnRuns += 1;
+    });
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
       const url = new URL(String(input));
       requests.push(String(input));
@@ -68,6 +73,7 @@ describe('application bootstrap integration', () => {
     });
     await vi.waitFor(() => {
       expect(requests).toEqual(expect.arrayContaining([...canonicalUrls, ...browsingUrls]));
+      expect(rootQueryFnRuns).toBeGreaterThan(0);
     });
     return requests;
   }

@@ -30,6 +30,13 @@ export function connectionHealth(root: { isError: boolean; error: unknown }, sta
 }
 
 export async function readSnapshot(client: ProPresenterClient, revision: number, signal?: AbortSignal, onStatusDiagnostic?: (error: unknown | null) => void): Promise<CanonicalState> {
+  console.log('[PP-DIAG] readSnapshot entry', {
+    settings: null,
+    base: client.base,
+    queryKey: 'propresenter-session',
+    path: ['/v1/presentation/slide_index?chunked=false', '/v1/playlist/active?chunked=false', '/v1/status/slide?chunked=false'],
+    revision,
+  });
   // All required sources start together. A status failure is output-only, not a connection failure.
   const [position, activePlaylist, status] = await Promise.all([
     client.presentationPosition(signal), client.activePlaylist(signal), client.slideStatus(signal).then((value) => { onStatusDiagnostic?.(null); return value; }).catch((error) => { if (signal?.aborted) throw error; onStatusDiagnostic?.(error); return null; }),
@@ -39,6 +46,7 @@ export async function readSnapshot(client: ProPresenterClient, revision: number,
 
 export function ProPresenterSessionProvider({ settings, children }: { settings: ConnectionSettings; children: React.ReactNode }) {
   const base = apiBase(settings); const client = useMemo(() => new ProPresenterClient(base), [base]); const queryClient = useQueryClient();
+  console.log('[PP-DIAG] ProPresenterSessionProvider render', { settings, base, queryKey: sessionKey(base), path: '/v1/presentation/slide_index?chunked=false' });
   const revision = useRef(0);
   const accepted = useRef<{ base: string; state: CanonicalState | null }>({ base, state: null });
   const lastSuccessfulPollAt = useRef<number | null>(null);
@@ -47,6 +55,12 @@ export function ProPresenterSessionProvider({ settings, children }: { settings: 
   const root = useQuery({
     queryKey: sessionKey(base),
     queryFn: async ({ signal }) => {
+      console.log('[PP-DIAG] root useQuery queryFn entry', {
+        settings,
+        base,
+        queryKey: sessionKey(base),
+        path: ['/v1/presentation/slide_index?chunked=false', '/v1/playlist/active?chunked=false', '/v1/status/slide?chunked=false'],
+      });
       if (accepted.current.base !== base) {
         accepted.current = { base, state: null };
         lastSuccessfulPollAt.current = null;
@@ -62,6 +76,17 @@ export function ProPresenterSessionProvider({ settings, children }: { settings: 
     refetchIntervalInBackground: false,
     retry: 1,
     retryDelay: 250,
+  });
+  console.log('[PP-DIAG] root useQuery state', {
+    settings,
+    base,
+    queryKey: sessionKey(base),
+    path: '/v1/presentation/slide_index?chunked=false',
+    status: root.status,
+    fetchStatus: root.fetchStatus,
+    isPending: root.isPending,
+    isFetching: root.isFetching,
+    isError: root.isError,
   });
   useEffect(() => {
     if (!root.isError || lastSuccessfulPollAt.current === null) return undefined;
