@@ -1,6 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ArrangementCueIndex, CanonicalState, LibraryPresentationContext, Playlist, PlaylistItemContext, PresentationContext, canTriggerPresentationCue, currentCueIndex, groupStarts, libraryPresentationContext, playlistItemContext, remoteDisplayMode, slideText } from './propresenter';
 import { isNativeProxy } from './propresenter-client';
 import { ProPresenterSessionProvider, genericPresentationThumbnailUrl, presentationThumbnailUrl, useLibraries, useLibraryItems, usePlaylistItems, usePlaylists, usePresentationCues, useProPresenterSession } from './propresenter-session';
@@ -63,12 +61,17 @@ export function App() {
     let mounted = true;
     const check = async () => {
       if (native) return mounted && setSupported(true);
-      if (!window.isSecureContext || !navigator.permissions?.query) return mounted && setSupported(false);
+      // PermissionManager support is only a browser capability hint. A rejected
+      // or pending permission query must not prevent a configured session from
+      // attempting the actual ProPresenter request.
+      if (!window.isSecureContext) return mounted && setSupported(false);
+      if (mounted) setSupported(true);
+      if (!navigator.permissions?.query) return;
       try {
         await navigator.permissions.query({ name: 'local-network' as PermissionName });
-        if (mounted) setSupported(true);
       } catch {
-        if (mounted) setSupported(false);
+        // Local Network Access is established by the fetch itself. Keep the
+        // session mounted so its connection state can report the real result.
       }
     };
     void check();
@@ -80,5 +83,3 @@ export function App() {
   if (!settings) return <Panel title="연결 설정"><ConnectionForm onConnect={connect} /></Panel>;
   return <><SessionApp settings={settings} connection={() => setModal(true)} />{modal && <Panel modal title="연결 정보" onClose={() => setModal(false)}><ConnectionForm initial={settings} onConnect={connect} onCancel={() => setModal(false)} /></Panel>}</>;
 }
-const client = new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 250, refetchOnWindowFocus: false } } });
-if (typeof document !== 'undefined') createRoot(document.getElementById('root')!).render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
