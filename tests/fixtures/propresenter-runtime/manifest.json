@@ -1,0 +1,132 @@
+{
+  "base": "http://172.30.1.51:1025",
+  "capturedAt": "2026-09-11T07:06:52.899Z",
+  "requests": [
+    {
+      "name": "playlists",
+      "endpoint": "/v1/playlists?chunked=false",
+      "url": "http://172.30.1.51:1025/v1/playlists?chunked=false",
+      "capturedAt": "2026-09-11T07:06:52.695Z",
+      "status": 200,
+      "contentType": "application/json",
+      "rootType": "array",
+      "topLevelKeys": [],
+      "bodyFile": "playlists.json",
+      "error": null
+    },
+    {
+      "name": "libraries",
+      "endpoint": "/v1/libraries?chunked=false",
+      "url": "http://172.30.1.51:1025/v1/libraries?chunked=false",
+      "capturedAt": "2026-09-11T07:06:52.841Z",
+      "status": 200,
+      "contentType": "application/json",
+      "rootType": "array",
+      "topLevelKeys": [],
+      "bodyFile": "libraries.json",
+      "error": null
+    },
+    {
+      "name": "presentation-slide-index",
+      "endpoint": "/v1/presentation/slide_index?chunked=false",
+      "url": "http://172.30.1.51:1025/v1/presentation/slide_index?chunked=false",
+      "capturedAt": "2026-09-11T07:06:52.855Z",
+      "status": 200,
+      "contentType": "application/json",
+      "rootType": "object",
+      "topLevelKeys": [
+        "presentation_index"
+      ],
+      "bodyFile": "presentation-slide-index.json",
+      "error": null
+    },
+    {
+      "name": "playlist-active",
+      "endpoint": "/v1/playlist/active?chunked=false",
+      "url": "http://172.30.1.51:1025/v1/playlist/active?chunked=false",
+      "capturedAt": "2026-09-11T07:06:52.862Z",
+      "status": 200,
+      "contentType": "application/json",
+      "rootType": "object",
+      "topLevelKeys": [
+        "presentation",
+        "announcements"
+      ],
+      "bodyFile": "playlist-active.json",
+      "error": null
+    },
+    {
+      "name": "status-slide",
+      "endpoint": "/v1/status/slide?chunked=false",
+      "url": "http://172.30.1.51:1025/v1/status/slide?chunked=false",
+      "capturedAt": "2026-09-11T07:06:52.867Z",
+      "status": 200,
+      "contentType": "application/json",
+      "rootType": "object",
+      "topLevelKeys": [
+        "current",
+        "next"
+      ],
+      "bodyFile": "status-slide.json",
+      "error": null
+    },
+    {
+      "name": "presentation-active",
+      "endpoint": "/v1/presentation/active?chunked=false",
+      "url": "http://172.30.1.51:1025/v1/presentation/active?chunked=false",
+      "capturedAt": "2026-09-11T07:06:52.873Z",
+      "status": 200,
+      "contentType": "application/json",
+      "rootType": "object",
+      "topLevelKeys": [
+        "presentation"
+      ],
+      "bodyFile": "presentation-active.json",
+      "error": null
+    },
+    {
+      "name": "playlist-detail",
+      "endpoint": "/v1/playlist/4EEDCE13-DD0F-4BE2-ADE2-6FBC5022C110?chunked=false",
+      "url": "http://172.30.1.51:1025/v1/playlist/4EEDCE13-DD0F-4BE2-ADE2-6FBC5022C110?chunked=false",
+      "capturedAt": "2026-09-11T07:06:52.881Z",
+      "status": 200,
+      "contentType": "application/json",
+      "rootType": "object",
+      "topLevelKeys": [
+        "id",
+        "items"
+      ],
+      "bodyFile": "playlist-detail.json",
+      "error": null
+    },
+    {
+      "name": "library-detail",
+      "endpoint": "/v1/library/37069776-3F1E-48D6-9758-D9008D9430E5?chunked=false",
+      "url": "http://172.30.1.51:1025/v1/library/37069776-3F1E-48D6-9758-D9008D9430E5?chunked=false",
+      "capturedAt": "2026-09-11T07:06:52.889Z",
+      "status": 200,
+      "contentType": "application/json",
+      "rootType": "object",
+      "topLevelKeys": [
+        "update_type",
+        "items"
+      ],
+      "bodyFile": "library-detail.json",
+      "error": null
+    },
+    {
+      "name": "presentation-detail",
+      "endpoint": "/v1/presentation/AACC10B2-F202-4832-9C25-7164D823402D?chunked=false",
+      "url": "http://172.30.1.51:1025/v1/presentation/AACC10B2-F202-4832-9C25-7164D823402D?chunked=false",
+      "capturedAt": "2026-09-11T07:08:04.865Z",
+      "status": 200,
+      "contentType": "application/json",
+      "rootType": "object",
+      "topLevelKeys": [
+        "presentation"
+      ],
+      "bodyFile": "presentation-detail.json",
+      "error": null
+    }
+  ]
+}

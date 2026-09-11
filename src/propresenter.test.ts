@@ -1,4 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import librariesFixture from '../tests/fixtures/propresenter-runtime/libraries.json';
+import libraryDetailFixture from '../tests/fixtures/propresenter-runtime/library-detail.json';
+import playlistActiveFixture from '../tests/fixtures/propresenter-runtime/playlist-active.json';
+import playlistDetailFixture from '../tests/fixtures/propresenter-runtime/playlist-detail.json';
+import playlistsFixture from '../tests/fixtures/propresenter-runtime/playlists.json';
+import presentationActiveFixture from '../tests/fixtures/propresenter-runtime/presentation-active.json';
+import presentationDetailFixture from '../tests/fixtures/propresenter-runtime/presentation-detail.json';
+import presentationSlideIndexFixture from '../tests/fixtures/propresenter-runtime/presentation-slide-index.json';
+import statusSlideFixture from '../tests/fixtures/propresenter-runtime/status-slide.json';
 import { ProPresenterApiError, ProPresenterClient } from './propresenter-client';
 import { acceptCanonicalSnapshot, asPlaylistItemIndex, canTriggerPresentationCue, enrichPlaylistContext, flattenSlides, isCurrentContext, normalizeCanonicalState, normalizeLibraries, normalizeLibraryItems, normalizePlaylistItems, normalizePlaylistTree, playlistItemContext, remoteDisplayMode } from './propresenter';
 
@@ -8,6 +17,7 @@ const active = { presentation: { playlist: id('playlist-a', 'Playlist A'), item:
 const status = { current: { uuid: 'output-uuid-not-detail', text: 'Current', notes: '' }, next: { uuid: 'next-uuid', text: 'Next', notes: '' } } as const;
 const item = (uuid: string, arrangement_name: string) => ({ id: id(uuid, 'Item A', 3), type: 'presentation' as const, is_hidden: false, is_pco: false, presentation_info: { presentation_uuid: 'presentation-a', arrangement_name } });
 const jsonClient = (body: unknown) => new ProPresenterClient('', async () => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
+const fixtureClient = (body: unknown) => new ProPresenterClient('', async () => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
 
 describe('official OpenAPI adapter', () => {
   it('keeps presentation id and cue index as one slide_index pair', () => { const state = normalizeCanonicalState({ revision: 1, position, activePlaylist: active, status }); expect(state.presentationId).toBe('presentation-a'); expect(state.slideIndex).toBe(2); });
@@ -27,6 +37,14 @@ describe('official OpenAPI adapter', () => {
 describe('runtime compatibility adapter', () => {
   const playlistTree = [{ id: id('playlist-a', 'Playlist A'), type: 'playlist' as const, playlists: [] }];
   const libraries = [{ id: id('library-a', 'Library A') }];
+  const runtimePlaylistTree = [
+    { id: { uuid: '4EEDCE13-DD0F-4BE2-ADE2-6FBC5022C110', name: '26.07.16. 수련회', index: 0 }, field_type: 'playlist', children: [] },
+    { id: { uuid: '9DBD9C5C-2A37-4624-8C8F-6F8780497B70', name: '주일예배', index: 1 }, field_type: 'playlist', children: [] },
+  ];
+  const runtimeLibraries = [
+    { uuid: '37069776-3F1E-48D6-9758-D9008D9430E5', name: '기본', index: 0 },
+    { uuid: '061BEB96-EDF3-46CF-9344-211CBD6DAD48', name: '설교', index: 1 },
+  ];
 
   it('normalizes raw and data-wrapped playlist trees identically', async () => {
     const raw = normalizePlaylistTree(await jsonClient(playlistTree).playlists());
@@ -34,10 +52,24 @@ describe('runtime compatibility adapter', () => {
     expect(wrapped).toEqual(raw);
   });
 
+  it('normalizes the confirmed field_type/children playlist payload', async () => {
+    expect(normalizePlaylistTree(await jsonClient(runtimePlaylistTree).playlists())).toEqual([
+      { id: '4EEDCE13-DD0F-4BE2-ADE2-6FBC5022C110', name: '26.07.16. 수련회', depth: 0 },
+      { id: '9DBD9C5C-2A37-4624-8C8F-6F8780497B70', name: '주일예배', depth: 0 },
+    ]);
+  });
+
   it('normalizes raw and data-wrapped libraries', async () => {
     const raw = normalizeLibraries(await jsonClient(libraries).libraries());
     const wrapped = normalizeLibraries(await jsonClient({ data: { libraries } }).libraries());
     expect(wrapped).toEqual(raw);
+  });
+
+  it('normalizes direct uuid/name/index library entries to the official library shape', async () => {
+    expect(normalizeLibraries(await jsonClient(runtimeLibraries).libraries())).toEqual([
+      { id: '37069776-3F1E-48D6-9758-D9008D9430E5', name: '기본' },
+      { id: '061BEB96-EDF3-46CF-9344-211CBD6DAD48', name: '설교' },
+    ]);
   });
 
   it('normalizes raw and legacy wrapped library details', async () => {
@@ -60,6 +92,31 @@ describe('runtime compatibility adapter', () => {
     expect(wrappedStatus).toEqual(status);
     expect(wrappedActivePresentation).toEqual({ presentation });
     expect(wrappedPresentation).toEqual(presentation);
+  });
+
+  it('decodes every collected golden runtime fixture into domain-compatible DTOs', async () => {
+    const playlists = await fixtureClient(playlistsFixture).playlists();
+    const libraries = await fixtureClient(librariesFixture).libraries();
+    const position = await fixtureClient(presentationSlideIndexFixture).presentationPosition();
+    const activePlaylist = await fixtureClient(playlistActiveFixture).activePlaylist();
+    const slideStatus = await fixtureClient(statusSlideFixture).slideStatus();
+    const activePresentation = await fixtureClient(presentationActiveFixture).activePresentation();
+    const playlist = await fixtureClient(playlistDetailFixture).playlist('4EEDCE13-DD0F-4BE2-ADE2-6FBC5022C110');
+    const library = await fixtureClient(libraryDetailFixture).library('37069776-3F1E-48D6-9758-D9008D9430E5');
+    const presentation = await fixtureClient(presentationDetailFixture).presentation('AACC10B2-F202-4832-9C25-7164D823402D');
+
+    expect(normalizePlaylistTree(playlists)).toHaveLength(4);
+    expect(normalizeLibraries(libraries)[0]).toEqual({ id: '37069776-3F1E-48D6-9758-D9008D9430E5', name: '기본' });
+    expect(position.presentation_index?.index).toBe(0);
+    expect(activePlaylist.presentation?.playlist).toBeNull();
+    expect(slideStatus.current?.text).toBe('할렐루야 살아계신 주');
+    expect(flattenSlides(activePresentation, 'active-arrangement')).toHaveLength(7);
+    expect(normalizePlaylistItems(playlist)).toHaveLength(13);
+    expect(library.updateType).toBe('all');
+    expect(normalizeLibraryItems(library)).toHaveLength(2);
+    expect(flattenSlides(presentation, 'presentation')).toHaveLength(2);
+    expect(normalizeCanonicalState({ revision: 1, position, activePlaylist, status: slideStatus }).presentationId)
+      .toBe('A748F826-7A09-49CA-ACA1-A09DEC4403CE');
   });
 
   it('fails with a decode diagnostic for an unknown wrapper', async () => {

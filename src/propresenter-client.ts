@@ -80,6 +80,36 @@ function isPlaylistTree(value: unknown): value is PlaylistTreeResponse {
   return true;
 }
 
+const runtimePlaylistFieldTypes: Readonly<Record<string, 'playlist' | 'group'>> = {
+  playlist: 'playlist',
+  group: 'group',
+};
+
+function normalizeRuntimePlaylistNode(value: unknown): JsonObject | null {
+  if (!isObject(value) || !isIdentifier(value.id)) return null;
+  const rawType = typeof value.type === 'string' ? value.type : typeof value.field_type === 'string' ? value.field_type : null;
+  const normalizedType = rawType ? runtimePlaylistFieldTypes[rawType] : undefined;
+  if (!normalizedType) return null;
+  const hasPlaylists = has(value, 'playlists');
+  const hasChildren = has(value, 'children');
+  if (hasPlaylists && !Array.isArray(value.playlists)) return null;
+  if (hasChildren && !Array.isArray(value.children)) return null;
+  if (hasPlaylists && hasChildren) return null;
+  const rawChildren = hasPlaylists ? value.playlists : hasChildren ? value.children : undefined;
+  if (normalizedType === 'group' && !Array.isArray(rawChildren)) return null;
+  const children = rawChildren === undefined ? undefined : (rawChildren as readonly unknown[]).map(normalizeRuntimePlaylistNode);
+  if (children?.some((child): child is null => child === null)) return null;
+  const normalized: Record<string, unknown> = { id: value.id, type: normalizedType };
+  if (children) normalized.playlists = children;
+  return normalized;
+}
+
+function normalizeRuntimePlaylistTree(value: unknown): PlaylistTreeResponse | null {
+  if (!Array.isArray(value)) return null;
+  const nodes = value.map(normalizeRuntimePlaylistNode);
+  return nodes.every((node): node is JsonObject => node !== null) ? nodes as unknown as PlaylistTreeResponse : null;
+}
+
 const playlistItemTypes = new Set(['presentation', 'placeholder', 'header', 'media', 'audio', 'livevideo']);
 
 function isPlaylistItem(value: unknown): boolean {
@@ -117,17 +147,26 @@ function normalizedLibraryItems(value: unknown): FocusedItem[] | null {
   return items.every((item): item is FocusedItem => item !== null) ? items : null;
 }
 
-function isLibraryItem(value: unknown): boolean {
-  return isObject(value) && typeof value.uuid === 'string' && typeof value.name === 'string' && (!has(value, 'index') || isFiniteNumber(value.index));
+function normalizeLibrariesResponse(value: unknown): LibrariesResponse | null {
+  if (!Array.isArray(value)) return null;
+  const libraries = value.map((item) => {
+    if (!isObject(item)) return null;
+    if (isIdentifier(item.id)) return { id: item.id };
+    if (isIdentifier(item)) return { id: item };
+    return null;
+  });
+  return libraries.every((library): library is { id: { uuid: string | null; name: string; index: number } } => library !== null)
+    ? libraries as LibrariesResponse
+    : null;
 }
 
-function isLibrariesResponse(value: unknown): value is LibrariesResponse {
-  return Array.isArray(value) && value.every((item) => isObject(item) && isIdentifier(item.id));
-}
-
-function isLibraryResponse(value: unknown): value is LibraryResponse {
-  if (!isObject(value) || !Array.isArray(value.items) || !value.items.every(isLibraryItem)) return false;
-  return !has(value, 'updateType') || value.updateType === 'all' || value.updateType === 'add' || value.updateType === 'remove';
+function canonicalLibraryResponse(value: JsonObject): LibraryResponse | null {
+  const normalized = normalizedLibraryItems(value.items);
+  if (!normalized) return null;
+  if (has(value, 'updateType') && has(value, 'update_type') && value.updateType !== value.update_type) return null;
+  const updateType = has(value, 'updateType') ? value.updateType : value.update_type;
+  if (updateType !== undefined && updateType !== 'all' && updateType !== 'add' && updateType !== 'remove') return null;
+  return { updateType: (updateType ?? 'all') as LibraryResponse['updateType'], items: normalized };
 }
 
 function isActiveLayer(value: unknown): boolean {
@@ -227,12 +266,11 @@ function libraryResponseFromItems(items: unknown): LibraryResponse | null {
 }
 
 function libraryResponseFromKnownContainer(value: JsonObject): LibraryResponse | null {
-  if (isLibraryResponse(value)) return { ...value, updateType: value.updateType ?? 'all' } as LibraryResponse;
+  const direct = canonicalLibraryResponse(value);
+  if (direct) return direct;
   if (has(value, 'library')) {
-    if (isLibraryResponse(value.library)) return { ...value.library, updateType: value.library.updateType ?? 'all' } as LibraryResponse;
     if (isObject(value.library)) {
-      const nestedItems = has(value.library, 'items') ? value.library.items : value.library.presentations;
-      const nested = libraryResponseFromItems(nestedItems);
+      const nested = libraryResponseFromKnownContainer(value.library);
       if (nested) return nested;
     }
   }
@@ -246,13 +284,25 @@ function libraryResponseFromKnownContainer(value: JsonObject): LibraryResponse |
 
 function decodePlaylistTree(value: unknown): PlaylistTreeResponse {
   if (isPlaylistTree(value)) return value;
+  const runtime = normalizeRuntimePlaylistTree(value);
+  if (runtime) return runtime;
   if (!isObject(value)) rejectShape();
   if (has(value, 'data')) {
     if (isPlaylistTree(value.data)) return value.data;
+    const runtimeData = normalizeRuntimePlaylistTree(value.data);
+    if (runtimeData) return runtimeData;
     if (isObject(value.data) && isPlaylistTree(value.data.playlists)) return value.data.playlists;
+    if (isObject(value.data)) {
+      const runtimePlaylists = normalizeRuntimePlaylistTree(value.data.playlists);
+      if (runtimePlaylists) return runtimePlaylists;
+    }
     rejectShape('data');
   }
   if (has(value, 'playlists') && isPlaylistTree(value.playlists)) return value.playlists;
+  if (has(value, 'playlists')) {
+    const runtimePlaylists = normalizeRuntimePlaylistTree(value.playlists);
+    if (runtimePlaylists) return runtimePlaylists;
+  }
   rejectShape(rootKeys(value));
 }
 
@@ -273,19 +323,26 @@ function decodePlaylist(value: unknown, path: string): PlaylistResponse {
 }
 
 function decodeLibraries(value: unknown): LibrariesResponse {
-  if (isLibrariesResponse(value)) return value;
+  const normalized = normalizeLibrariesResponse(value);
+  if (normalized) return normalized;
   if (!isObject(value)) rejectShape();
   if (has(value, 'data')) {
-    if (isLibrariesResponse(value.data)) return value.data;
-    if (isObject(value.data) && isLibrariesResponse(value.data.libraries)) return value.data.libraries;
+    const data = normalizeLibrariesResponse(value.data);
+    if (data) return data;
+    if (isObject(value.data)) {
+      const nested = normalizeLibrariesResponse(value.data.libraries);
+      if (nested) return nested;
+    }
     rejectShape('data');
   }
-  if (has(value, 'libraries') && isLibrariesResponse(value.libraries)) return value.libraries;
+  if (has(value, 'libraries')) {
+    const libraries = normalizeLibrariesResponse(value.libraries);
+    if (libraries) return libraries;
+  }
   rejectShape(rootKeys(value));
 }
 
 function decodeLibrary(value: unknown): LibraryResponse {
-  if (isLibraryResponse(value)) return { ...value, updateType: value.updateType ?? 'all' } as LibraryResponse;
   if (Array.isArray(value)) {
     const raw = libraryResponseFromItems(value);
     if (raw) return raw;
@@ -293,7 +350,6 @@ function decodeLibrary(value: unknown): LibraryResponse {
   }
   if (!isObject(value)) rejectShape();
   if (has(value, 'data')) {
-    if (isLibraryResponse(value.data)) return { ...value.data, updateType: value.data.updateType ?? 'all' } as LibraryResponse;
     if (isObject(value.data)) {
       const nested = libraryResponseFromKnownContainer(value.data);
       if (nested) return nested;
