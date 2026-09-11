@@ -447,13 +447,12 @@ export class ProPresenterClient {
   constructor(readonly base: string, private readonly fetcher: typeof fetch = fetch) {}
 
   private async request(path: string, signal?: AbortSignal): Promise<Response> {
-    console.log('[PP-DIAG] ProPresenterClient.request entry', { settings: null, base: this.base, queryKey: 'transport', path });
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal?.addEventListener('abort', abort, { once: true });
     const timeout = globalThis.setTimeout(abort, REQUEST_TIMEOUT_MS);
     try {
-      const response = await this.fetcher(`${this.base}${path}`, {
+      const response = await this.fetcher.call(globalThis, `${this.base}${path}`, {
         cache: 'no-store',
         headers: { Accept: 'application/json' },
         signal: controller.signal,

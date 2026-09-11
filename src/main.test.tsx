@@ -32,6 +32,10 @@ function responseFor(pathname: string): Response {
 
 describe('application bootstrap integration', () => {
   let appRoot: Root | null = null;
+  let queryClient: QueryClient | null = null;
+  let container: HTMLDivElement | null = null;
+  const originalIsSecureContext = Object.getOwnPropertyDescriptor(window, 'isSecureContext');
+  const originalPermissions = Object.getOwnPropertyDescriptor(navigator, 'permissions');
 
   beforeEach(() => {
     window.localStorage.clear();
@@ -44,17 +48,22 @@ describe('application bootstrap integration', () => {
       await act(async () => appRoot?.unmount());
       appRoot = null;
     }
+    queryClient?.clear();
+    queryClient = null;
+    container?.remove();
+    container = null;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    if (originalIsSecureContext) Object.defineProperty(window, 'isSecureContext', originalIsSecureContext);
+    else Reflect.deleteProperty(window, 'isSecureContext');
+    if (originalPermissions) Object.defineProperty(navigator, 'permissions', originalPermissions);
+    else Reflect.deleteProperty(navigator, 'permissions');
   });
 
   async function mountApp(permissionQuery: () => Promise<PermissionStatus>): Promise<string[]> {
     const requests: string[] = [];
-    let rootQueryFnRuns = 0;
-    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      if (args[0] === '[PP-DIAG] root useQuery queryFn entry') rootQueryFnRuns += 1;
-    });
-    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', vi.fn(function (this: unknown, input: RequestInfo | URL): Promise<Response> {
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
       const url = new URL(String(input));
       requests.push(String(input));
       return Promise.resolve(responseFor(url.pathname));
@@ -64,21 +73,21 @@ describe('application bootstrap integration', () => {
       value: { query: vi.fn(permissionQuery) },
     });
 
-    const container = document.createElement('div');
+    container = document.createElement('div');
     document.body.append(container);
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 250, refetchOnWindowFocus: false } } });
     appRoot = createRoot(container);
     await act(async () => {
       appRoot?.render(<QueryClientProvider client={queryClient}><App /></QueryClientProvider>);
     });
     await vi.waitFor(() => {
       expect(requests).toEqual(expect.arrayContaining([...canonicalUrls, ...browsingUrls]));
-      expect(rootQueryFnRuns).toBeGreaterThan(0);
+      expect(container?.textContent).toContain('연결됨');
     });
     return requests;
   }
 
-  it('mounts App and starts canonical and browsing requests when permission query resolves', async () => {
+  it('mounts App with a native fetch receiver and starts canonical and browsing requests', async () => {
     const requests = await mountApp(async () => ({ state: 'granted' } as PermissionStatus));
     expect(requests).toEqual(expect.arrayContaining([...canonicalUrls, ...browsingUrls]));
   });
