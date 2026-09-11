@@ -29,7 +29,7 @@ export function connectionHealth(root: { isError: boolean; error: unknown }, sta
   return { status: 'connecting', error: null };
 }
 
-async function readSnapshot(client: ProPresenterClient, revision: number, signal?: AbortSignal, onStatusDiagnostic?: (error: unknown | null) => void): Promise<CanonicalState> {
+export async function readSnapshot(client: ProPresenterClient, revision: number, signal?: AbortSignal, onStatusDiagnostic?: (error: unknown | null) => void): Promise<CanonicalState> {
   // All required sources start together. A status failure is output-only, not a connection failure.
   const [position, activePlaylist, status] = await Promise.all([
     client.presentationPosition(signal), client.activePlaylist(signal), client.slideStatus(signal).then((value) => { onStatusDiagnostic?.(null); return value; }).catch((error) => { if (signal?.aborted) throw error; onStatusDiagnostic?.(error); return null; }),

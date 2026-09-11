@@ -7,7 +7,21 @@ import { ProPresenterSessionProvider, genericPresentationThumbnailUrl, presentat
 import './styles.css';
 
 const settingsKey = 'propresenter-remote:connection';
-type Settings = { host: string; port: number }; type Source = 'library' | 'playlist'; type RemoteMode = 'text' | 'preview' | 'auto';
+export type Settings = { host: string; port: number }; type Source = 'library' | 'playlist'; type RemoteMode = 'text' | 'preview' | 'auto';
+
+export function loadConnectionSettings(storage: Pick<Storage, 'getItem'>, native: boolean, fallback: Settings): Settings | null {
+  if (native) return fallback;
+  try {
+    const value: unknown = JSON.parse(storage.getItem(settingsKey) || 'null');
+    if (value && typeof value === 'object' && typeof (value as { host?: unknown }).host === 'string' && Number.isInteger((value as { port?: unknown }).port)) {
+      const settings = value as Settings;
+      if (settings.host.trim() && settings.port >= 1 && settings.port <= 65535) return settings;
+    }
+  } catch {
+    // A malformed saved value should reopen connection setup, not abort the app bootstrap.
+  }
+  return null;
+}
 
 function Panel({ modal = false, title, children, onClose }: { modal?: boolean; title: string; children: React.ReactNode; onClose?: () => void }) { const content = <section className={modal ? 'settings-panel' : 'card'} role={modal ? 'dialog' : undefined} aria-modal={modal || undefined} onClick={(event) => modal && event.stopPropagation()}><div className="settings-heading"><h2>{title}</h2>{onClose && <button className="icon-button" onClick={onClose}>×</button>}</div>{children}</section>; return modal ? <div className="settings-backdrop" onClick={onClose}>{content}</div> : <main className="shell">{content}</main>; }
 function ConnectionForm({ initial, onConnect, onCancel }: { initial?: Settings | null; onConnect: (value: Settings) => void; onCancel?: () => void }) { const [host, setHost] = useState(initial?.host ?? ''); const [port, setPort] = useState(initial?.port ?? 1025); return <form onSubmit={(event) => { event.preventDefault(); onConnect({ host: host.trim(), port: Number(port) }); }}><label>PC IP 주소<input value={host} onChange={(event) => setHost(event.target.value)} required /></label><label>포트 번호<input type="number" value={port} min="1" max="65535" onChange={(event) => setPort(Number(event.target.value))} required /></label><div className="form-actions">{onCancel && <button className="secondary-button" type="button" onClick={onCancel}>취소</button>}<button>ProPresenter 연결</button></div></form>; }
@@ -38,7 +52,33 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
 }
 function RemoteSlide({ label, text, preview }: { label: string; text: string; preview: string | null }) { return <section className={`remote-slide ${preview ? 'remote-preview' : 'remote-text'}`}><span className="remote-slide-label">{label}</span>{preview ? <img src={preview} alt={`${label} 슬라이드 미리보기`} /> : <p>{text || '표시할 슬라이드가 없습니다.'}</p>}</section>; }
 function Remote() { const { base, state, connection, commands } = useProPresenterSession(); const [mode, setMode] = useState<RemoteMode>('auto'); const context = state?.playlistItem ?? null; const cues = usePresentationCues(context); const current = currentCueIndex(state, context); const display = remoteDisplayMode(mode, state?.currentCue ?? null); const preview = display === 'preview' ? presentationThumbnailUrl(base, context, current, '512') ?? genericPresentationThumbnailUrl(base, state?.presentationId ?? null, current, '512') : null; const groups = useMemo(() => groupStarts(cues.data ?? []), [cues.data]); return <main className="remote-app"><section className="remote-screen"><header className="remote-header"><button className="remote-back" onClick={() => window.location.assign('/')}>컨트롤러</button><div className="remote-mode-switch">{(['text', 'preview', 'auto'] as RemoteMode[]).map((entry) => <button key={entry} className={mode === entry ? 'active' : ''} onClick={() => setMode(entry)}>{entry === 'text' ? '텍스트' : entry === 'preview' ? '미리보기' : '자동'}</button>)}</div><span className="remote-status">{connection.status === 'connected' ? '연결됨' : '연결 오류'}</span></header>{commands.error && <p className="remote-command-error" role="alert">{commands.error}</p>}<div className={`remote-slides ${display === 'preview' ? 'single' : ''}`}><RemoteSlide label="현재" text={state?.currentCue?.text ?? ''} preview={preview} />{display === 'text' && <RemoteSlide label="다음" text={state?.nextCue?.text ?? ''} preview={null} />}</div></section><section className="remote-control-area"><section className="remote-controls"><button className="remote-control previous" disabled={commands.pending} onClick={() => void commands.previous().catch(() => undefined)}>‹<span>이전</span></button><button className="remote-control next" disabled={commands.pending} onClick={() => void commands.next().catch(() => undefined)}><span>다음</span>›</button></section><nav className="remote-group-strip">{groups.map((group) => <button key={group.key} disabled={commands.pending || !context} onClick={() => void commands.triggerActiveGroup(group.name).catch(() => undefined)}>{group.name}</button>)}</nav></section></main>; }
-function SessionApp({ settings, connection }: { settings: Settings; connection: () => void }) { return <ProPresenterSessionProvider settings={settings}>{location.pathname === '/remote' ? <Remote /> : <Controller settings={settings} onConnection={connection} />}</ProPresenterSessionProvider>; }
-function App() { const native = isNativeProxy(); const fallback: Settings = { host: location.hostname || '127.0.0.1', port: 1025 }; const [settings, setSettings] = useState<Settings | null>(() => native ? fallback : JSON.parse(localStorage.getItem(settingsKey) || 'null')); const [modal, setModal] = useState(false); const [supported] = useState(native || (window.isSecureContext && Boolean(navigator.permissions))); const connect = (value: Settings) => { if (!native) localStorage.setItem(settingsKey, JSON.stringify(value)); setSettings(value); setModal(false); }; if (!supported) return <UnsupportedBrowser />; if (!settings) return <Panel title="연결 설정"><ConnectionForm onConnect={connect} /></Panel>; return <><SessionApp settings={settings} connection={() => setModal(true)} />{modal && <Panel modal title="연결 정보" onClose={() => setModal(false)}><ConnectionForm initial={settings} onConnect={connect} onCancel={() => setModal(false)} /></Panel>}</>; }
+export function SessionApp({ settings, connection }: { settings: Settings; connection: () => void }) { const path = typeof location === 'undefined' ? '/' : location.pathname; return <ProPresenterSessionProvider settings={settings}>{path === '/remote' ? <Remote /> : <Controller settings={settings} onConnection={connection} />}</ProPresenterSessionProvider>; }
+export function App() {
+  const native = isNativeProxy();
+  const fallback: Settings = { host: location.hostname || '127.0.0.1', port: 1025 };
+  const [supported, setSupported] = useState<boolean | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(() => loadConnectionSettings(localStorage, native, fallback));
+  const [modal, setModal] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    const check = async () => {
+      if (native) return mounted && setSupported(true);
+      if (!window.isSecureContext || !navigator.permissions?.query) return mounted && setSupported(false);
+      try {
+        await navigator.permissions.query({ name: 'local-network' as PermissionName });
+        if (mounted) setSupported(true);
+      } catch {
+        if (mounted) setSupported(false);
+      }
+    };
+    void check();
+    return () => { mounted = false; };
+  }, [native]);
+  const connect = (value: Settings) => { if (!native) localStorage.setItem(settingsKey, JSON.stringify(value)); setSettings(value); setModal(false); };
+  if (supported === null) return null;
+  if (!supported) return <UnsupportedBrowser />;
+  if (!settings) return <Panel title="연결 설정"><ConnectionForm onConnect={connect} /></Panel>;
+  return <><SessionApp settings={settings} connection={() => setModal(true)} />{modal && <Panel modal title="연결 정보" onClose={() => setModal(false)}><ConnectionForm initial={settings} onConnect={connect} onCancel={() => setModal(false)} /></Panel>}</>;
+}
 const client = new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 250, refetchOnWindowFocus: false } } });
-createRoot(document.getElementById('root')!).render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
+if (typeof document !== 'undefined') createRoot(document.getElementById('root')!).render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
