@@ -95,6 +95,8 @@ describe('application bootstrap integration', () => {
   it('mounts App with a native fetch receiver and starts canonical and browsing requests', async () => {
     const requests = await mountApp(async () => ({ state: 'granted' } as PermissionStatus));
     expect(requests).toEqual(expect.arrayContaining([...canonicalUrls, ...browsingUrls]));
+    expect(container?.querySelector('.top-live-badge')?.className).toContain('connection-connected');
+    expect(container?.querySelector('.top-live-badge .status-dot')?.className).toContain('connected');
   });
 
   it('does not block the configured session when permission query rejects', async () => {
@@ -126,5 +128,27 @@ describe('application bootstrap integration', () => {
     await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('B'));
     await act(async () => container?.querySelector<HTMLButtonElement>('.top-follow-button')?.click());
     await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('A'));
+  });
+
+  it('renders a directly triggered Library presentation in Controller and Remote without playlist identity', async () => {
+    const responder = (pathname: string) => {
+      if (pathname === '/v1/presentation/slide_index') return new Response(JSON.stringify({ presentation_index: { index: 0, presentation_id: { uuid: 'presentation-a', name: 'Library A', index: 0 } } }), { status: 200 });
+      if (pathname === '/v1/presentation/active') return new Response(JSON.stringify({ presentation: { groups: [{ name: 'Group A', color: null, slides: [{ text: 'Live Library cue', notes: '', label: '' }] }] } }), { status: 200 });
+      return responseFor(pathname);
+    };
+    await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
+    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Library A'));
+    expect(container?.querySelector('.slide-card.active')?.textContent).toContain('1');
+    const originalPathname = window.location.pathname;
+    window.history.pushState({}, '', '/remote');
+    try {
+      await act(async () => appRoot?.render(<QueryClientProvider client={queryClient!}><App /></QueryClientProvider>));
+      await vi.waitFor(() => expect(container?.querySelector('.remote-status')?.textContent).toContain('연결됨'));
+      expect(container?.querySelector('.remote-status')?.className).toContain('connection-connected');
+      await vi.waitFor(() => expect(container?.querySelector('.remote-slide')?.textContent).toContain('Current'));
+      await vi.waitFor(() => expect(container?.querySelector('.remote-group-strip button')?.textContent).toBe('Group A'));
+    } finally {
+      window.history.replaceState({}, '', originalPathname);
+    }
   });
 });

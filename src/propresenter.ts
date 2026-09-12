@@ -31,7 +31,9 @@ export type PlaylistItemContext = {
   presentationId: string | null; arrangementName: string | null; kind: PlaylistItemKind; name: string; cacheKey: string;
 };
 export type LibraryPresentationContext = { source: 'library'; libraryId: string; presentationId: string; name: string; cacheKey: string };
-export type PresentationContext = PlaylistItemContext | LibraryPresentationContext;
+/** A presentation currently live outside a playlist context (for example a direct Library trigger). */
+export type ActivePresentationContext = { source: 'active'; presentationId: string; name: string; cacheKey: string };
+export type PresentationContext = PlaylistItemContext | LibraryPresentationContext | ActivePresentationContext;
 
 export type CanonicalState = {
   revision: number; observedAt: number;
@@ -90,6 +92,17 @@ export function playlistItemContext(playlist: Pick<Playlist, 'id' | 'name'>, ite
 export function normalizeLibraries(response: LibrariesResponse): Library[] { return response.map((item) => ({ id: item.id.uuid, name: item.id.name })); }
 export function normalizeLibraryItems(response: LibraryResponse): LibraryPresentation[] { return response.items.map((item) => ({ id: item.uuid, name: item.name })); }
 export function libraryPresentationContext(libraryId: string, item: LibraryPresentation): LibraryPresentationContext { return { source: 'library', libraryId, presentationId: item.id, name: item.name, cacheKey: `${libraryId}:${item.id}` }; }
+export function activePresentationContext(presentationId: string, name: string | null): ActivePresentationContext { return { source: 'active', presentationId, name: name || '현재 프레젠테이션', cacheKey: `active:${presentationId}` }; }
+/** Keeps the active playlist presentation visible while its detail query is loading. */
+export function activePlaylistPresentationContext(state: CanonicalState): PlaylistItemContext | null {
+  if (state.outputLayers?.slide === false || !state.playlistId || !state.playlistItemId || state.playlistItemIndex === null || !state.presentationId) return null;
+  const name = state.presentationName || '현재 프레젠테이션';
+  return {
+    source: 'playlist', playlistId: state.playlistId, playlistName: state.playlistName || '재생목록', playlistItemId: state.playlistItemId,
+    playlistItemIndex: state.playlistItemIndex, presentationId: state.presentationId, arrangementName: state.arrangementName, kind: 'presentation', name,
+    cacheKey: `${state.playlistId}:${state.playlistItemId}:${state.playlistItemIndex}:${state.presentationId}:${state.arrangementName || 'default'}`,
+  };
+}
 
 export function enrichPlaylistContext(state: CanonicalState, response: PlaylistResponse | null): CanonicalState {
   if (!response || !state.playlistId || response.id.uuid !== state.playlistId || !state.playlistItemId) return state;
@@ -102,11 +115,11 @@ export function enrichPlaylistContext(state: CanonicalState, response: PlaylistR
 }
 export function isCurrentContext(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): boolean {
   if (!state || !context) return false;
-  if (context.source === 'library') return state.playlistId === null && state.playlistItemId === null && state.presentationId === context.presentationId;
+  if (context.source !== 'playlist') return state.playlistId === null && state.playlistItemId === null && state.presentationId === context.presentationId;
   return state.playlistId === context.playlistId && state.playlistItemId === context.playlistItemId && state.playlistItemIndex === context.playlistItemIndex && state.presentationId === context.presentationId;
 }
 export function currentCueIndex(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): ArrangementCueIndex | null { return isCurrentContext(state, context) ? state!.slideIndex : null; }
-export function canTriggerPresentationCue(state: CanonicalState | null | undefined, context: PresentationContext): boolean { return context.source === 'library' || isCurrentContext(state, context); }
+export function canTriggerPresentationCue(state: CanonicalState | null | undefined, context: PresentationContext): boolean { return context.source !== 'playlist' || isCurrentContext(state, context); }
 export function canReadArrangementCues(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): boolean {
   return Boolean(context?.source !== 'playlist' || !context.arrangementName || isCurrentContext(state, context));
 }

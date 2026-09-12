@@ -39,7 +39,7 @@ function samePosition(left: Awaited<ReturnType<ProPresenterClient['presentationP
 export async function readSnapshot(client: ProPresenterClient, revision: number, signal?: AbortSignal, onStatusDiagnostic?: (error: unknown | null) => void): Promise<CanonicalState> {
   // Position and playlist identity are required. Slide/layer status improves output
   // fidelity but must not make a healthy control session appear disconnected.
-  const diagnostic = (error: unknown) => { if (!signal?.aborted) onStatusDiagnostic?.(error); return null; };
+  const diagnostic = (error: unknown) => { if (signal?.aborted) throw error; onStatusDiagnostic?.(error); return null; };
   // One immediate retry resolves the common boundary case without composing
   // fields from different moments. If both samples move, report only the
   // final authoritative position; the next poll fills in its paired metadata.
