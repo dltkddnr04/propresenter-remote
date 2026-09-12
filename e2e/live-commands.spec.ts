@@ -2,8 +2,9 @@ import { expect } from '@playwright/test';
 import { attachJson, installConnectionSettings, productionUrl, readApiSnapshot, readUiSnapshot } from './helpers';
 import { test } from './fixtures';
 
+test.skip(process.env.PP_E2E_LIVE_COMMANDS !== '1' || process.env.PP_E2E_ALLOW_OUTPUT_CHANGES !== '1', 'Live output tests require PP_E2E_LIVE_COMMANDS=1 and PP_E2E_ALLOW_OUTPUT_CHANGES=1.');
+
 test('opt-in remote next command is reflected by the canonical state', async ({ page, request }, testInfo) => {
-  test.skip(process.env.PP_E2E_LIVE_COMMANDS !== '1' || process.env.PP_E2E_ALLOW_OUTPUT_CHANGES !== '1', 'Live output tests require PP_E2E_LIVE_COMMANDS=1 and PP_E2E_ALLOW_OUTPUT_CHANGES=1.');
   await installConnectionSettings(page);
   await page.goto(`${productionUrl}/remote`, { waitUntil: 'domcontentloaded' });
   await expect(page.locator('.remote-status')).toContainText('연결됨', { timeout: 15_000 });

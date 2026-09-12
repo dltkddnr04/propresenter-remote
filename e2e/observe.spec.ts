@@ -2,8 +2,9 @@ import { expect } from '@playwright/test';
 import { attachJson, installConnectionSettings, productionUrl, readApiSnapshot, readUiSnapshot } from './helpers';
 import { test } from './fixtures';
 
+test.skip(process.env.PP_E2E_OBSERVE_TRANSITIONS !== '1', 'Set PP_E2E_OBSERVE_TRANSITIONS=1 and operate ProPresenter during this test.');
+
 test('observes a human-operated ProPresenter transition and measures UI convergence', async ({ page, context, request }, testInfo) => {
-  test.skip(process.env.PP_E2E_OBSERVE_TRANSITIONS !== '1', 'Set PP_E2E_OBSERVE_TRANSITIONS=1 and operate ProPresenter during this test.');
   const timeout = Number(process.env.PP_E2E_OBSERVE_TIMEOUT_MS ?? 30_000);
   await installConnectionSettings(page);
   await page.goto(productionUrl, { waitUntil: 'domcontentloaded' });
