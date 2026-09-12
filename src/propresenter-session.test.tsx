@@ -104,7 +104,7 @@ describe('shared command service', () => {
     expect(calls).toContain('/v1/presentation/active/group/1/trigger');
   });
 
-  it('waits for a post-command canonical read before releasing the next command', async () => {
+  it('keeps FIFO command HTTP order without waiting for canonical reconciliation', async () => {
     let serverIndex = 0;
     let nextCalls = 0;
     let releaseFirstRefresh: (() => void) | null = null;
@@ -118,7 +118,7 @@ describe('shared command service', () => {
       }
       if (path === '/v1/presentation/slide_index') {
         if (serverIndex === 0 && nextCalls === 1 && !releaseFirstRefresh) {
-          return new Promise<Response>((resolve) => { releaseFirstRefresh = () => { serverIndex = 1; resolve(positionResponse()); }; });
+          return new Promise<Response>((resolve) => { releaseFirstRefresh = () => resolve(response({ presentation_index: { presentation_id: id('presentation-a'), index: 1 } })); });
         }
         return Promise.resolve(positionResponse());
       }
@@ -139,10 +139,9 @@ describe('shared command service', () => {
     await vi.waitFor(() => expect(releaseFirstRefresh).not.toBeNull());
     const second = session!.commands.next();
     await Promise.resolve();
-    expect(nextCalls).toBe(1);
+    await vi.waitFor(() => expect(nextCalls).toBe(2));
     releaseFirstRefresh!();
     await first;
-    await vi.waitFor(() => expect(nextCalls).toBe(2));
     await second;
     await vi.waitFor(() => expect(session?.state?.slideIndex).toBe(2));
   });

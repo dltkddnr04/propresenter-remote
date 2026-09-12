@@ -42,6 +42,8 @@ input { width: 100%; border: 1px solid #46557a; border-radius: 10px; padding: 14
 @media (max-width:720px) { .control-app { grid-template-columns:1fr; } .sidebar { border-right:0; border-bottom:1px solid #2a3550; } .playlist-list { display:flex; overflow-x:auto; } .playlist-item { min-width:max-content; } .workspace { padding:30px 20px; } }
 .presentation-list { display:grid; gap:28px; margin-top:32px; }
 .presentation-block { display:grid; gap:14px; }
+.playlist-item-block { display:grid; gap:14px; padding:14px 0; border-top:1px solid #2a3550; }
+.playlist-item-block .presentation-heading strong { color:#8996b0; font-weight:600; }
 .presentation-heading { display:flex; justify-content:space-between; gap:12px; align-items:baseline; color:#dbe4f5; }
 .presentation-heading small { color:#8996b0; }
 .header-card { padding:12px 14px; border-left:4px solid #90a8ff; background:#192236; color:#dbe4f5; }

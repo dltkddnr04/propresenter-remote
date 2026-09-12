@@ -96,18 +96,37 @@ export function ProPresenterSessionProvider({ settings, children }: { settings: 
   const canonical = root.data ?? (accepted.current.base === base ? accepted.current.state : null);
   const state = useMemo(() => canonical ? enrichPlaylistContext(canonical, playlist.data ?? null) : null, [canonical, playlist.data]);
   const connection = connectionHealth(root, state, lastSuccessfulPollAt.current, Date.now(), statusDiagnostic.current);
-  const commandTail = useRef<Promise<void>>(Promise.resolve()); const queuedCommands = useRef(0); const [pending, setPending] = useState(false); const [commandError, setCommandError] = useState<string | null>(null);
+  const commandTail = useRef<Promise<void>>(Promise.resolve()); const commandReconciliation = useRef<Promise<void> | null>(null); const reconciliationQueued = useRef(false); const queuedCommands = useRef(0); const [pending, setPending] = useState(false); const [commandError, setCommandError] = useState<string | null>(null);
   const commands = useMemo<ProPresenterCommands>(() => {
+    const scheduleReconciliation = () => {
+      if (commandReconciliation.current) {
+        // A read already in flight may observe an intermediate device state.
+        // Remember the later command so a final read is started when it ends.
+        reconciliationQueued.current = true;
+        return;
+      }
+      const task = queryClient.refetchQueries({ queryKey: sessionKey(base), type: 'active' }).catch(() => undefined);
+      const tracked = task.finally(() => {
+        if (commandReconciliation.current !== tracked) return;
+        commandReconciliation.current = null;
+        if (reconciliationQueued.current) {
+          reconciliationQueued.current = false;
+          scheduleReconciliation();
+        }
+      });
+      commandReconciliation.current = tracked;
+    };
     const run = async (command: () => Promise<void>) => {
       queuedCommands.current += 1; setPending(true);
       const execute = async () => {
         setCommandError(null);
         try {
           await command();
-          // Wait for one post-command canonical read before releasing the next
-          // queued command. This does not predict or confirm a target state;
-          // ProPresenter still decides the resulting cue/item.
-          await queryClient.refetchQueries({ queryKey: sessionKey(base), type: 'active' }).catch(() => undefined);
+          // Keep the HTTP command queue FIFO, but do not make the next input
+          // wait for the complete canonical read. ProPresenter remains the
+          // source of truth; this coalesced read reconciles the UI in the
+          // background without inventing a target state.
+          scheduleReconciliation();
         } catch (error) {
           setCommandError(error instanceof Error ? error.message : 'ProPresenter 명령을 전달할 수 없습니다.');
           throw error;
@@ -141,11 +160,11 @@ export function useLibraryItems(libraryId: string | null, enabled = true) { cons
 
 export function usePresentationCues(context: PresentationContext | null | undefined, options: { enabled?: boolean } = {}) {
   const { base, client, state } = useProPresenterSession(); const activeArrangement = isCurrentContext(state, context);
-  return useQuery({ queryKey: ['propresenter-presentation-cues', base, context?.cacheKey, activeArrangement ? 'active-arrangement' : 'presentation'], queryFn: ({ signal }) => activeArrangement ? client.activePresentation(signal).then((response) => flattenSlides(response, 'active-arrangement')) : client.presentation(context!.presentationId!, signal).then((response) => flattenSlides(response, 'presentation')), enabled: Boolean(context?.presentationId) && options.enabled !== false, retry: 1, refetchInterval: activeArrangement ? 1_500 : 5_000 });
+  return useQuery({ queryKey: ['propresenter-presentation-cues', base, context?.cacheKey, activeArrangement ? 'active-arrangement' : 'presentation'], queryFn: ({ signal }) => activeArrangement ? client.activePresentation(signal).then((response) => flattenSlides(response, 'active-arrangement')) : client.presentation(context!.presentationId!, signal).then((response) => flattenSlides(response, 'presentation')), enabled: Boolean(context?.presentationId) && options.enabled !== false, placeholderData: (previousData) => previousData, retry: 1, refetchInterval: activeArrangement ? 1_500 : 5_000 });
 }
 export function useActivePresentationCues() {
   const { base, client, state } = useProPresenterSession(); const enabled = Boolean(state?.presentationId) && state?.outputLayers?.slide !== false;
-  return useQuery({ queryKey: ['propresenter-active-presentation-cues', base, state?.presentationId, state?.playlistItem?.cacheKey ?? 'unscoped'], queryFn: ({ signal }) => client.activePresentation(signal).then((response) => flattenSlides(response, 'active-arrangement')), enabled, retry: 1, refetchInterval: 1_500 });
+  return useQuery({ queryKey: ['propresenter-active-presentation-cues', base, state?.presentationId, state?.playlistItem?.cacheKey ?? 'unscoped'], queryFn: ({ signal }) => client.activePresentation(signal).then((response) => flattenSlides(response, 'active-arrangement')), enabled, placeholderData: (previousData) => previousData, retry: 1, refetchInterval: 1_500 });
 }
 export function playlistThumbnailUrl(base: string, context: PlaylistItemContext, cueIndex: number, quality: string): string { return `${base}/v1/playlist/${encodeURIComponent(context.playlistId)}/${context.playlistItemIndex}/thumbnail/${cueIndex}?quality=${quality}`; }
 export function activePlaylistThumbnailUrl(base: string, context: PlaylistItemContext, cueIndex: number, quality: string): string { return `${base}/v1/playlist/active/presentation/${context.playlistItemIndex}/thumbnail/${cueIndex}?quality=${quality}`; }

@@ -123,11 +123,12 @@ describe('application bootstrap integration', () => {
       return responseFor(pathname);
     };
     await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
-    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('A'));
+    await vi.waitFor(() => expect(container?.querySelector('[data-context-key*="item-a"] .presentation-heading strong')?.textContent).toBe('A'));
     await act(async () => container?.querySelector<HTMLButtonElement>('.sidebar-item-button:nth-of-type(2)')?.click());
-    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('B'));
+    await vi.waitFor(() => expect(container?.querySelector('[data-context-key*="item-b"] .presentation-heading strong')?.textContent).toBe('B'));
+    expect(container?.querySelectorAll('.presentation-block')).toHaveLength(2);
     await act(async () => container?.querySelector<HTMLButtonElement>('.top-follow-button')?.click());
-    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('A'));
+    await vi.waitFor(() => expect(container?.querySelector('[data-context-key*="item-a"] .slide-card.active')).not.toBeNull());
   });
 
   it('adopts a late active playlist while following instead of staying on the first playlist', async () => {
@@ -165,10 +166,12 @@ describe('application bootstrap integration', () => {
       return responseFor(pathname);
     };
     await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
-    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Live Presentation'));
-    await vi.waitFor(() => expect(container?.querySelector('.slide-card.active')).not.toBeNull());
-    expect(container?.querySelector('.slide-card')?.getAttribute('data-context-key')).toBe('active:presentation-live');
-    expect(container?.querySelector(`[data-context-key*="${focusedItem.uuid}"]`)).toBeNull();
+    await vi.waitFor(() => expect(container?.querySelector('[data-context-key="active:presentation-live"] .presentation-heading strong')?.textContent).toBe('Live Presentation'));
+    await vi.waitFor(() => expect(container?.querySelector('[data-context-key="active:presentation-live"] .slide-card.active')).not.toBeNull());
+    expect(container?.querySelector('[data-context-key="active:presentation-live"] .slide-card')?.getAttribute('data-context-key')).toBe('active:presentation-live');
+    const focusedBlock = container?.querySelector(`[data-context-key*="${focusedItem.uuid}"]`);
+    expect(focusedBlock).not.toBeNull();
+    expect(focusedBlock?.querySelector('.slide-card.active')).toBeNull();
   });
 
   it('keeps inactive playlist presentations browsable without marking them live', async () => {
@@ -190,22 +193,88 @@ describe('application bootstrap integration', () => {
     await vi.waitFor(() => expect(container?.querySelectorAll('.sidebar-item-button')).toHaveLength(3));
     const items = container?.querySelectorAll<HTMLButtonElement>('.sidebar-item-button');
     await act(async () => items?.[1].click());
-    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Presentation B'));
+    const blockB = '[data-context-key*="item-b:1:presentation-shared:Full"]';
+    await vi.waitFor(() => expect(container?.querySelector(`${blockB} .presentation-heading strong`)?.textContent).toBe('Presentation B'));
     expect(container?.textContent).not.toContain('활성화 필요');
-    await vi.waitFor(() => expect(container?.querySelectorAll('.slide-card')).toHaveLength(2));
-    expect(container?.querySelector('.presentation-heading small')?.textContent).toContain('기본 cue 보기');
-    expect(container?.querySelector('.slide-card.active')).toBeNull();
-    expect(container?.querySelector<HTMLButtonElement>('.slide-card')?.disabled).toBe(true);
-    expect(container?.querySelector<HTMLImageElement>('.slide-card img')?.src).toContain('/v1/presentation/presentation-shared/thumbnail/0');
-    expect(container?.querySelector('.slide-card')?.getAttribute('data-context-key')).toContain('item-b:1:presentation-shared:Full');
+    await vi.waitFor(() => expect(container?.querySelectorAll('.presentation-block')).toHaveLength(3));
+    expect(container?.querySelector(`${blockB} .presentation-heading small`)?.textContent).toContain('기본 cue 보기');
+    expect(container?.querySelector(`${blockB} .slide-card.active`)).toBeNull();
+    expect(container?.querySelector<HTMLButtonElement>(`${blockB} .slide-card`)?.disabled).toBe(true);
+    expect(container?.querySelector<HTMLImageElement>(`${blockB} .slide-card img`)?.src).toContain('/v1/presentation/presentation-shared/thumbnail/0');
+    expect(container?.querySelector(`${blockB} .slide-card`)?.getAttribute('data-context-key')).toContain('item-b:1:presentation-shared:Full');
 
     await act(async () => container?.querySelectorAll<HTMLButtonElement>('.sidebar-item-button')[2].click());
-    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Presentation C'));
-    await vi.waitFor(() => expect(container?.querySelectorAll('.slide-card')).toHaveLength(2));
-    expect(container?.querySelector('.slide-card.active')).toBeNull();
-    expect(container?.querySelector('.slide-card')?.getAttribute('data-context-key')).toContain('item-c:2:presentation-shared:Chorus Only');
+    const blockC = '[data-context-key*="item-c:2:presentation-shared:Chorus Only"]';
+    await vi.waitFor(() => expect(container?.querySelector(`${blockC} .presentation-heading strong`)?.textContent).toBe('Presentation C'));
+    await vi.waitFor(() => expect(container?.querySelectorAll('.slide-card')).toHaveLength(6));
+    expect(container?.querySelector(`${blockC} .slide-card.active`)).toBeNull();
+    expect(container?.querySelector(`${blockC} .slide-card`)?.getAttribute('data-context-key')).toContain('item-c:2:presentation-shared:Chorus Only');
     await act(async () => container?.querySelector<HTMLButtonElement>('.top-follow-button')?.click());
-    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Presentation A'));
+    await vi.waitFor(() => expect(container?.querySelector('[data-context-key*="item-a"] .slide-card.active')).not.toBeNull());
+  });
+
+  it('renders every playlist presentation alongside non-presentation items and preserves block DOM on slide updates', async () => {
+    let currentIndex = 0;
+    const playlistId = { uuid: 'playlist-a', name: 'Playlist A', index: 0 };
+    const item = (uuid: string, name: string, index: number, type: string, presentationUuid?: string) => ({
+      id: { uuid, name, index }, type, ...(presentationUuid ? { presentation_info: { presentation_uuid: presentationUuid } } : {}), is_hidden: false, is_pco: false,
+    });
+    const items = [item('item-a', 'Presentation A', 0, 'presentation', 'presentation-a'), item('item-media', 'Background video', 1, 'media'), item('item-b', 'Presentation B', 2, 'presentation', 'presentation-b'), item('item-c', 'Presentation C', 3, 'presentation', 'presentation-c')];
+    const presentation = (name: string) => ({ groups: [{ name: 'Group', color: null, slides: [{ text: `${name} 1`, notes: '', label: '1' }, { text: `${name} 2`, notes: '', label: '2' }] }] });
+    const responder = (pathname: string) => {
+      if (pathname === '/v1/presentation/slide_index') return new Response(JSON.stringify({ presentation_index: { index: currentIndex, presentation_id: { uuid: 'presentation-a', name: 'Presentation A', index: 0 } } }), { status: 200 });
+      if (pathname === '/v1/playlist/active') return new Response(JSON.stringify({ presentation: { playlist: playlistId, item: items[0].id }, announcements: { playlist: null, item: null } }), { status: 200 });
+      if (pathname === '/v1/playlists') return new Response(JSON.stringify([{ id: playlistId, type: 'playlist' }]), { status: 200 });
+      if (pathname === '/v1/playlist/playlist-a') return new Response(JSON.stringify({ id: playlistId, items }), { status: 200 });
+      if (pathname === '/v1/presentation/active') return new Response(JSON.stringify({ presentation: presentation('Presentation A') }), { status: 200 });
+      if (pathname === '/v1/presentation/presentation-a') return new Response(JSON.stringify(presentation('Presentation A')), { status: 200 });
+      if (pathname === '/v1/presentation/presentation-b') return new Response(JSON.stringify(presentation('Presentation B')), { status: 200 });
+      if (pathname === '/v1/presentation/presentation-c') return new Response(JSON.stringify(presentation('Presentation C')), { status: 200 });
+      return responseFor(pathname);
+    };
+    await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
+    await vi.waitFor(() => expect(container?.querySelectorAll('.presentation-block')).toHaveLength(3));
+    await vi.waitFor(() => expect(container?.querySelectorAll('.slide-card')).toHaveLength(6));
+    expect(container?.querySelectorAll('.playlist-item-block')).toHaveLength(1);
+    expect(container?.querySelector('[data-context-key*="item-a"] .slide-card.active')).not.toBeNull();
+    const blockA = container?.querySelector('[data-context-key*="item-a"]');
+    expect(container?.querySelector('[data-context-key*="item-b"]')).not.toBeNull();
+    expect(container?.querySelector('[data-context-key*="item-c"]')).not.toBeNull();
+
+    currentIndex = 1;
+    await vi.waitFor(() => expect(container?.querySelector('[data-context-key*="item-a"] .slide-card.active')?.getAttribute('data-slide-index')).toBe('1'), { timeout: 2_000 });
+    expect(container?.querySelector('[data-context-key*="item-a"]')).toBe(blockA);
+    expect(container?.querySelectorAll('.presentation-block')).toHaveLength(3);
+  });
+
+  it('keeps playlist blocks visible while an item changes from generic to active-arrangement data', async () => {
+    let activePresentationId = 'presentation-a';
+    let activeItemId = 'item-a';
+    const playlistId = { uuid: 'playlist-a', name: 'Playlist A', index: 0 };
+    const items = [
+      { id: { uuid: 'item-a', name: 'Presentation A', index: 0 }, type: 'presentation', presentation_info: { presentation_uuid: 'presentation-a' }, is_hidden: false, is_pco: false },
+      { id: { uuid: 'item-b', name: 'Presentation B', index: 1 }, type: 'presentation', presentation_info: { presentation_uuid: 'presentation-b' }, is_hidden: false, is_pco: false },
+    ];
+    const presentation = (name: string) => ({ groups: [{ name: 'Group', color: null, slides: [{ text: `${name} slide`, notes: '', label: '1' }] }] });
+    const responder = (pathname: string) => {
+      if (pathname === '/v1/presentation/slide_index') return new Response(JSON.stringify({ presentation_index: { index: 0, presentation_id: { uuid: activePresentationId, name: activePresentationId === 'presentation-a' ? 'Presentation A' : 'Presentation B', index: 0 } } }), { status: 200 });
+      if (pathname === '/v1/playlist/active') return new Response(JSON.stringify({ presentation: { playlist: playlistId, item: { uuid: activeItemId, name: activeItemId === 'item-a' ? 'Presentation A' : 'Presentation B', index: activeItemId === 'item-a' ? 0 : 1 } }, announcements: { playlist: null, item: null } }), { status: 200 });
+      if (pathname === '/v1/playlists') return new Response(JSON.stringify([{ id: playlistId, type: 'playlist' }]), { status: 200 });
+      if (pathname === '/v1/playlist/playlist-a') return new Response(JSON.stringify({ id: playlistId, items }), { status: 200 });
+      if (pathname === '/v1/presentation/active') return new Response(JSON.stringify({ presentation: presentation(activePresentationId === 'presentation-a' ? 'Presentation A' : 'Presentation B') }), { status: 200 });
+      if (pathname === '/v1/presentation/presentation-a') return new Response(JSON.stringify(presentation('Presentation A')), { status: 200 });
+      if (pathname === '/v1/presentation/presentation-b') return new Response(JSON.stringify(presentation('Presentation B')), { status: 200 });
+      return responseFor(pathname);
+    };
+    await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
+    await vi.waitFor(() => expect(container?.querySelectorAll('.slide-card')).toHaveLength(2));
+    const blockB = container?.querySelector('[data-context-key*="item-b"]');
+    activePresentationId = 'presentation-b';
+    activeItemId = 'item-b';
+    await vi.waitFor(() => expect(container?.querySelector('[data-context-key*="item-b"] .slide-card.active')).not.toBeNull(), { timeout: 2_000 });
+    expect(container?.querySelector('[data-context-key*="item-a"]')).not.toBeNull();
+    expect(container?.querySelector('[data-context-key*="item-b"]')).toBe(blockB);
+    expect(container?.querySelectorAll('.slide-card')).toHaveLength(2);
   });
 
   it('handles Controller keyboard shortcuts without focus and ignores interactive targets', async () => {
