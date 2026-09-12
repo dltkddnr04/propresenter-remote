@@ -131,8 +131,7 @@ export async function waitForCoherentUi(page: Page, request: APIRequestContext, 
     last = { api, ui };
     const sameController = api.presentationId === ui.controller.presentationId && api.slideIndex === ui.controller.slideIndex;
     const sameCard = api.slideIndex === null || api.slideIndex === ui.controller.activeCardIndex;
-    const samePlaylistItem = !api.playlistItemName || ui.controller.title?.includes(api.playlistItemName) === true;
-    if (sameController && sameCard && samePlaylistItem) return { api, ui, latencyMs: Math.max(0, ui.observedAt - api.observedAt) };
+    if (sameController && sameCard) return { api, ui, latencyMs: Math.max(0, ui.observedAt - api.observedAt) };
     await page.waitForTimeout(200);
   }
   throw new Error(`Controller did not converge to API state: ${JSON.stringify(last)}`);

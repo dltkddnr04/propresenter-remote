@@ -115,6 +115,7 @@ export function enrichPlaylistContext(state: CanonicalState, response: PlaylistR
 }
 export function isCurrentContext(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): boolean {
   if (!state || !context) return false;
+  if (context.source === 'active') return state.presentationId === context.presentationId;
   if (context.source !== 'playlist') return state.playlistId === null && state.playlistItemId === null && state.presentationId === context.presentationId;
   return state.playlistId === context.playlistId && state.playlistItemId === context.playlistItemId && state.playlistItemIndex === context.playlistItemIndex && state.presentationId === context.presentationId;
 }

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrangementCueIndex, CanonicalState, LibraryPresentationContext, Playlist, PlaylistItemContext, PresentationContext, activeGroupKey, activePlaylistPresentationContext, activePresentationContext, canTriggerPresentationCue, currentCueIndex, groupStarts, isCurrentContext, libraryPresentationContext, playlistItemContext, remoteDisplayMode, slideText } from './propresenter';
+import { ArrangementCueIndex, CanonicalState, LibraryPresentationContext, Playlist, PlaylistItemContext, PresentationContext, activeGroupKey, activePresentationContext, canTriggerPresentationCue, currentCueIndex, groupStarts, isCurrentContext, libraryPresentationContext, playlistItemContext, remoteDisplayMode, slideText } from './propresenter';
 import { isNativeProxy } from './propresenter-client';
 import { ProPresenterSessionProvider, activePlaylistThumbnailUrl, genericPresentationThumbnailUrl, useActivePresentationCues, useLibraries, useLibraryItems, usePlaylistItems, usePlaylists, usePresentationCues, useProPresenterSession } from './propresenter-session';
 import './styles.css';
@@ -91,9 +91,12 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
     if (!selectedPlaylist) setSelectedPlaylist(allPlaylists.data[0].id);
   }, [allPlaylists.data, following, selectedPlaylist, state?.playlistId]);
   useEffect(() => { if (following && state?.playlistId) { setSource('playlist'); setSelectedPlaylist(state.playlistId); setPresentation(null); } }, [following, state?.playlistId]);
-  const activePlaylistContext = state ? activePlaylistPresentationContext(state) : null;
-  const activeContext = state?.presentationId && state.outputLayers?.slide !== false && state.playlistId === null && state.playlistItemId === null ? activePresentationContext(state.presentationId, state.presentationName) : null;
-  const liveContext = state?.playlistItem ?? activePlaylistContext ?? (presentation && isCurrentContext(state, presentation) ? presentation : null) ?? activeContext;
+  // Only an enriched playlist item has a verified presentation identity. The
+  // /playlist/active item can describe the focused item while slide_index is
+  // already showing another output, so keep that case in an unscoped active
+  // presentation context instead of combining the two wire responses.
+  const activeContext = state?.presentationId && state.outputLayers?.slide !== false && !state.playlistItem ? activePresentationContext(state.presentationId, state.presentationName) : null;
+  const liveContext = state?.playlistItem ?? (presentation && isCurrentContext(state, presentation) ? presentation : null) ?? activeContext;
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const next = ['ArrowRight', 'ArrowDown', ' '].includes(event.key) || event.code === 'Space';
@@ -108,7 +111,7 @@ function Controller({ settings, onConnection }: { settings: Settings; onConnecti
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [commands, showSettings]);
   useEffect(() => { const context = liveContext; const index = state?.slideIndex; if (!following || !workspace.current || !context || index === null) return; const target = workspace.current.querySelector<HTMLElement>(`.slide-card[data-context-key="${context.cacheKey}"][data-slide-index="${index}"]`); if (target && typeof workspace.current.scrollTo === 'function') { const box = workspace.current.getBoundingClientRect(); const slide = target.getBoundingClientRect(); workspace.current.scrollTo({ top: Math.max(0, workspace.current.scrollTop + slide.top - box.top - (workspace.current.clientHeight / 3 - slide.height / 2)), behavior: 'smooth' }); } }, [following, rendered, liveContext?.cacheKey, state?.slideIndex]);
-  const selected = presentation ?? state?.playlistItem ?? activePlaylistContext ?? activeContext; const title = state?.playlistId ? `${state.playlistName ?? '재생목록'} / ${state.playlistItem?.name ?? state.presentationName ?? '현재 프레젠테이션'}` : state?.presentationName ?? '재생목록';
+  const selected = presentation ?? state?.playlistItem ?? activeContext; const title = state?.playlistId ? `${state.playlistName ?? '재생목록'} / ${state.playlistItem?.name ?? state.presentationName ?? '현재 프레젠테이션'}` : state?.presentationName ?? '재생목록';
   const handleRendered = useCallback(() => setRendered((value) => value + 1), []);
   return <><TopNav settings={settings} title={title} following={following} follow={() => { setFollowing(true); setPresentation((current) => current?.source === 'library' && isCurrentContext(state, current) ? current : null); setRendered((value) => value + 1); }} connection={onConnection} appSettings={() => setShowSettings(true)} /><main className="control-app" data-presentation-id={state?.presentationId ?? ''} data-slide-index={state?.slideIndex ?? ''} data-connection-status={connection.status}><aside className="sidebar"><Sidebar source={source} setSource={(next) => { setFollowing(false); setSource(next); }} selectedPlaylist={selectedPlaylist} setSelectedPlaylist={(id) => { setFollowing(false); setSelectedPlaylist(id); }} selectedLibrary={selectedLibrary} setSelectedLibrary={(id) => { setFollowing(false); setSelectedLibrary(id); }} setPresentation={(value) => { setFollowing(false); setPresentation(value); }} /></aside><section className="workspace" ref={workspace} tabIndex={0} onWheel={() => setFollowing(false)} onTouchMove={() => setFollowing(false)}>{selected && <PresentationBlock context={selected} mode={mode} quality={quality} onRendered={handleRendered} />}</section></main>{showSettings && <Panel modal title="앱 설정" onClose={() => setShowSettings(false)}><label>슬라이드 표시 방식<select value={mode} onChange={(event) => { const value = event.target.value as 'preview' | 'text'; localStorage.setItem('propresenter-remote:slide-mode', value); setMode(value); }}><option value="preview">미리보기</option><option value="text">텍스트</option></select></label><label>미리보기 해상도<select value={quality} onChange={(event) => { localStorage.setItem('propresenter-remote:thumbnail-quality', event.target.value); setQuality(event.target.value); }}>{['64', '128', '256', '512'].map((value) => <option key={value}>{value}</option>)}</select></label></Panel>}{commands.error && <p className="remote-command-error">{commands.error}</p>}</>;
 }

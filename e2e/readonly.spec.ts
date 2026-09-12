@@ -34,8 +34,10 @@ test('production controller and remote converge on the real ProPresenter state',
       expect(controller.activeCardIndex).toBe(coherent.api.slideIndex);
     }
     if (coherent.api.playlistId && coherent.api.playlistItemId) {
-      expect(controller.title).toContain(coherent.api.playlistItemName ?? '');
-      expect(await page.locator(`.slide-card.active[data-context-key*="${coherent.api.playlistId}:${coherent.api.playlistItemId}"]`).count()).toBeGreaterThan(0);
+      // /playlist/active may report the focused playlist item while
+      // slide_index identifies a different currently output presentation.
+      // The UI must not invent a playlist-item identity in that case.
+      expect(controller.title).toContain(coherent.api.presentationName ?? '');
     }
 
     // Browsing an inactive playlist presentation is read-only: it must load

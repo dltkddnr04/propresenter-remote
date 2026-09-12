@@ -153,6 +153,24 @@ describe('application bootstrap integration', () => {
     await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Active Item'));
   });
 
+  it('does not merge a focused playlist item with a different currently output presentation', async () => {
+    const playlist = { uuid: 'playlist-active', name: 'Active Playlist', index: 0 };
+    const focusedItem = { uuid: 'item-focused', name: 'Focused Item', index: 0 };
+    const responder = (pathname: string) => {
+      if (pathname === '/v1/playlists') return new Response(JSON.stringify([{ id: playlist, type: 'playlist' }]), { status: 200 });
+      if (pathname === '/v1/playlist/active') return new Response(JSON.stringify({ presentation: { playlist, item: focusedItem }, announcements: { playlist: null, item: null } }), { status: 200 });
+      if (pathname === '/v1/presentation/slide_index') return new Response(JSON.stringify({ presentation_index: { index: 0, presentation_id: { uuid: 'presentation-live', name: 'Live Presentation', index: 0 } } }), { status: 200 });
+      if (pathname === '/v1/playlist/playlist-active') return new Response(JSON.stringify({ id: playlist, items: [{ id: focusedItem, type: 'presentation', presentation_info: { presentation_uuid: 'presentation-focused' }, is_hidden: false, is_pco: false }] }), { status: 200 });
+      if (pathname === '/v1/presentation/active') return new Response(JSON.stringify({ presentation: { groups: [{ name: 'Live Group', color: null, slides: [{ text: 'Live output', notes: '', label: '' }] }] } }), { status: 200 });
+      return responseFor(pathname);
+    };
+    await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
+    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Live Presentation'));
+    await vi.waitFor(() => expect(container?.querySelector('.slide-card.active')).not.toBeNull());
+    expect(container?.querySelector('.slide-card')?.getAttribute('data-context-key')).toBe('active:presentation-live');
+    expect(container?.querySelector(`[data-context-key*="${focusedItem.uuid}"]`)).toBeNull();
+  });
+
   it('keeps inactive playlist presentations browsable without marking them live', async () => {
     const playlistId = { uuid: 'playlist-a', name: 'Playlist A', index: 0 };
     const item = (uuid: string, name: string, index: number, presentationUuid: string, arrangement_name?: string) => ({
