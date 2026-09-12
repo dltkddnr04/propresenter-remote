@@ -49,7 +49,8 @@ test('production controller and remote converge on the real ProPresenter state',
       await expect(page.locator('.presentation-heading strong').filter({ hasText: inactiveName }).first()).toBeVisible({ timeout: 10_000 });
       await expect(page.locator('.presentation-heading small')).not.toContainText('활성화 필요');
       await expect(page.locator('body')).not.toContainText('이 항목 활성화');
-      expect(await page.locator('.slide-card.active').count()).toBe(0);
+      const inactiveBlock = page.locator('.presentation-block').filter({ hasText: inactiveName }).first();
+      expect(await inactiveBlock.locator('.slide-card.active').count()).toBe(0);
       await page.locator('.top-follow-button').click();
       await expect(page.locator('.top-follow-button')).toBeDisabled();
     }

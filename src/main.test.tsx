@@ -99,6 +99,23 @@ describe('application bootstrap integration', () => {
     expect(container?.querySelector('.top-live-badge .status-dot')?.className).toContain('connected');
   });
 
+  it('selects the canonical active playlist for the initial workspace without a click', async () => {
+    const playlist = { uuid: 'playlist-live', name: 'Live Playlist', index: 0 };
+    const playlistItem = { uuid: 'item-live', name: 'Live Presentation', index: 0 };
+    const presentation = { presentation: { groups: [{ name: 'Group', color: null, slides: [{ text: 'Live slide', notes: '', label: '' }] }] } };
+    const responder = (pathname: string) => {
+      if (pathname === '/v1/presentation/slide_index') return new Response(JSON.stringify({ presentation_index: { index: 0, presentation_id: { uuid: 'presentation-live', name: 'Live Presentation', index: 0 } } }), { status: 200 });
+      if (pathname === '/v1/playlist/active') return new Response(JSON.stringify({ presentation: { playlist, item: playlistItem }, announcements: { playlist: null, item: null } }), { status: 200 });
+      if (pathname === '/v1/playlists') return new Response(JSON.stringify([{ id: playlist, type: 'playlist' }]), { status: 200 });
+      if (pathname === '/v1/playlist/playlist-live') return new Response(JSON.stringify({ id: playlist, items: [{ id: playlistItem, type: 'presentation', presentation_info: { presentation_uuid: 'presentation-live' }, is_hidden: false, is_pco: false }] }), { status: 200 });
+      if (pathname === '/v1/presentation/active') return new Response(JSON.stringify(presentation), { status: 200 });
+      return responseFor(pathname);
+    };
+    await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
+    await vi.waitFor(() => expect(container?.querySelector('.sidebar-collection-item.active')?.textContent).toBe('Live Playlist'));
+    await vi.waitFor(() => expect(container?.querySelector('[data-context-key*="item-live"] .presentation-heading strong')?.textContent).toBe('Live Presentation'));
+  });
+
   it('does not block the configured session when permission query rejects', async () => {
     const requests = await mountApp(async () => { throw new Error('permission query is unavailable'); });
     expect(requests).toEqual(expect.arrayContaining(canonicalUrls));
