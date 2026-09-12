@@ -104,8 +104,10 @@ export function ProPresenterSessionProvider({ settings, children }: { settings: 
         setCommandError(null);
         try {
           await command();
-          // This is only a pull-forward of canonical polling, never a predicted state.
-          void queryClient.refetchQueries({ queryKey: sessionKey(base), type: 'active' }).catch(() => undefined);
+          // Wait for one post-command canonical read before releasing the next
+          // queued command. This does not predict or confirm a target state;
+          // ProPresenter still decides the resulting cue/item.
+          await queryClient.refetchQueries({ queryKey: sessionKey(base), type: 'active' }).catch(() => undefined);
         } catch (error) {
           setCommandError(error instanceof Error ? error.message : 'ProPresenter 명령을 전달할 수 없습니다.');
           throw error;

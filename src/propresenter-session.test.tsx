@@ -96,6 +96,49 @@ describe('shared command service', () => {
     expect(calls).toContain('/v1/presentation/active/group/1/trigger');
   });
 
+  it('waits for a post-command canonical read before releasing the next command', async () => {
+    let serverIndex = 0;
+    let nextCalls = 0;
+    let releaseFirstRefresh: (() => void) | null = null;
+    const positionResponse = () => response({ presentation_index: { presentation_id: id('presentation-a'), index: serverIndex } });
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/trigger/next') {
+        nextCalls += 1;
+        if (nextCalls === 2) serverIndex = 2;
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      if (path === '/v1/presentation/slide_index') {
+        if (serverIndex === 0 && nextCalls === 1 && !releaseFirstRefresh) {
+          return new Promise<Response>((resolve) => { releaseFirstRefresh = () => { serverIndex = 1; resolve(positionResponse()); }; });
+        }
+        return Promise.resolve(positionResponse());
+      }
+      if (path === '/v1/playlist/active') return Promise.resolve(response(emptyActive));
+      if (path === '/v1/status/slide') return Promise.resolve(response({ current: null, next: null }));
+      if (path === '/v1/status/layers') return Promise.resolve(response(layers));
+      throw new Error(`unexpected ${path}`);
+    }));
+    let session: ProPresenterSession | null = null;
+    function Probe() { session = useProPresenterSession(); return <span>{session.connection.status}</span>; }
+    container = document.createElement('div'); document.body.append(container);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } });
+    root = createRoot(container);
+    await act(async () => root?.render(<QueryClientProvider client={queryClient}><ProPresenterSessionProvider settings={{ host: '172.30.1.51', port: 1025 }}><Probe /></ProPresenterSessionProvider></QueryClientProvider>));
+    await vi.waitFor(() => expect(session?.connection.status).toBe('connected'));
+    const first = session!.commands.next();
+    await vi.waitFor(() => expect(nextCalls).toBe(1));
+    await vi.waitFor(() => expect(releaseFirstRefresh).not.toBeNull());
+    const second = session!.commands.next();
+    await Promise.resolve();
+    expect(nextCalls).toBe(1);
+    releaseFirstRefresh!();
+    await first;
+    await vi.waitFor(() => expect(nextCalls).toBe(2));
+    await second;
+    await vi.waitFor(() => expect(session?.state?.slideIndex).toBe(2));
+  });
+
   it('keeps a healthy session connected when only a command fails', async () => {
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
       const path = new URL(String(input)).pathname;

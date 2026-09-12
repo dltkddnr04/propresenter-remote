@@ -18,4 +18,4 @@
 14. Library presentation을 직접 실행한다. Controller의 선택 표시와 Remote의 current/next text, 미리보기, 그룹이 실제 active presentation과 일치하는지 확인한다.
 15. 같은 이름의 그룹을 두 개 만든 뒤 각 그룹을 Remote에서 누른다. 이름이 아닌 ProPresenter group index로 각각의 올바른 첫 cue가 실행되는지 확인한다.
 16. Clear 또는 slide layer를 끈 상태와 media/video input/prop을 함께 켠 상태를 각각 확인한다. slide layer가 꺼진 경우 Remote가 이전 presentation slide를 출력처럼 보이지 않으며, 합성 출력인 경우에는 이를 표시하는지 확인한다.
-17. Remote의 Next/Previous를 빠르게 연속 입력한다. 각 입력이 순서대로 ProPresenter에 전달되고, command HTTP 성공 직후가 아니라 실제 canonical state 갱신 후에 두 화면이 같은 cue를 표시하는지 확인한다.
+17. Remote의 Next/Previous를 빠르게 연속 입력한다. 각 입력이 순서대로 ProPresenter에 전달되고, 각 명령 뒤 canonical 재조회가 끝난 다음 다음 명령이 실행되는지 확인한다. ProPresenter가 204 이후 상태 반영을 지연하는 경우에는 실제 cue 반영이 끝난 뒤 최종 위치도 확인한다.
