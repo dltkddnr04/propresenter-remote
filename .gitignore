@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .wrangler/
+.build/
+*.app/
+.DS_Store
 .env
 .env.*
 !.env.example
