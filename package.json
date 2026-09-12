@@ -11,7 +11,10 @@
     "openapi:generate": "node tools/openapi/generate.mjs",
     "openapi:check": "node tools/openapi/check.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e:readonly": "playwright test e2e/readonly.spec.ts",
+    "e2e:observe": "playwright test e2e/observe.spec.ts",
+    "e2e:live": "playwright test e2e/live-commands.spec.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.66.8",
@@ -19,6 +22,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
     "@vitejs/plugin-react": "^4.3.4",
