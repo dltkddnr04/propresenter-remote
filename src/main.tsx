@@ -82,10 +82,13 @@ function TopNav({ settings, title, following, follow, connection, appSettings }:
 function Controller({ settings, onConnection }: { settings: Settings; onConnection: () => void }) {
   const { state, connection, commands } = useProPresenterSession(); const allPlaylists = usePlaylists(); const [source, setSource] = useState<Source>('playlist'); const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null); const [selectedLibrary, setSelectedLibrary] = useState<string | null>(null); const [presentation, setPresentation] = useState<PresentationContext | null>(null); const [following, setFollowing] = useState(true); const [mode, setMode] = useState<'preview' | 'text'>(() => localStorage.getItem('propresenter-remote:slide-mode') === 'text' ? 'text' : 'preview'); const [quality, setQuality] = useState(() => localStorage.getItem('propresenter-remote:thumbnail-quality') ?? '256'); const [showSettings, setShowSettings] = useState(false); const [rendered, setRendered] = useState(0); const workspace = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (!following || !allPlaylists.data?.length) return;
-    const activePlaylistId = state?.playlistId && allPlaylists.data.some((item) => item.id === state.playlistId) ? state.playlistId : null;
-    const nextPlaylistId = activePlaylistId ?? selectedPlaylist ?? allPlaylists.data[0].id;
-    if (nextPlaylistId !== selectedPlaylist) setSelectedPlaylist(nextPlaylistId);
+    if (!following || !state || !allPlaylists.data?.length) return;
+    if (state.playlistId) {
+      if (!allPlaylists.data.some((item) => item.id === state.playlistId)) return;
+      if (selectedPlaylist !== state.playlistId) setSelectedPlaylist(state.playlistId);
+      return;
+    }
+    if (!selectedPlaylist) setSelectedPlaylist(allPlaylists.data[0].id);
   }, [allPlaylists.data, following, selectedPlaylist, state?.playlistId]);
   useEffect(() => { if (following && state?.playlistId) { setSource('playlist'); setSelectedPlaylist(state.playlistId); setPresentation(null); } }, [following, state?.playlistId]);
   const activePlaylistContext = state ? activePlaylistPresentationContext(state) : null;
