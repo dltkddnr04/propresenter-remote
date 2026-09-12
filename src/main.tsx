@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrangementCueIndex, CanonicalState, LibraryPresentationContext, Playlist, PlaylistItemContext, PresentationContext, activeGroupKey, activePlaylistPresentationContext, activePresentationContext, canReadArrangementCues, canTriggerPresentationCue, currentCueIndex, groupStarts, isCurrentContext, libraryPresentationContext, playlistItemContext, remoteDisplayMode, slideText } from './propresenter';
 import { isNativeProxy } from './propresenter-client';
-import { ProPresenterSessionProvider, genericPresentationThumbnailUrl, presentationThumbnailUrl, useActivePresentationCues, useLibraries, useLibraryItems, usePlaylistItems, usePlaylists, usePresentationCues, useProPresenterSession } from './propresenter-session';
+import { ProPresenterSessionProvider, activePlaylistThumbnailUrl, genericPresentationThumbnailUrl, presentationThumbnailUrl, useActivePresentationCues, useLibraries, useLibraryItems, usePlaylistItems, usePlaylists, usePresentationCues, useProPresenterSession } from './propresenter-session';
 import './styles.css';
 
 const settingsKey = 'propresenter-remote:connection';
@@ -25,7 +25,7 @@ function Panel({ modal = false, title, children, onClose }: { modal?: boolean; t
 function ConnectionForm({ initial, onConnect, onCancel }: { initial?: Settings | null; onConnect: (value: Settings) => void; onCancel?: () => void }) { const [host, setHost] = useState(initial?.host ?? ''); const [port, setPort] = useState(initial?.port ?? 1025); return <form onSubmit={(event) => { event.preventDefault(); onConnect({ host: host.trim(), port: Number(port) }); }}><label>PC IP 주소<input value={host} onChange={(event) => setHost(event.target.value)} required /></label><label>포트 번호<input type="number" value={port} min="1" max="65535" onChange={(event) => setPort(Number(event.target.value))} required /></label><div className="form-actions">{onCancel && <button className="secondary-button" type="button" onClick={onCancel}>취소</button>}<button>ProPresenter 연결</button></div></form>; }
 function UnsupportedBrowser() { return <Panel title="지원되지 않는 브라우저"><p className="intro">이 웹앱은 ProPresenter PC의 로컬 네트워크 접근 권한이 필요합니다.</p><p>지원 브라우저 예시: Chrome · Edge · Opera · Firefox</p></Panel>; }
 
-function Thumb({ context, index, quality }: { context: PresentationContext; index: number | null; quality: string }) { const { base } = useProPresenterSession(); const src = presentationThumbnailUrl(base, context, index, quality); const fallback = context.source === 'library' ? genericPresentationThumbnailUrl(base, context.presentationId, index, quality) : null; return src ? <img loading="lazy" src={src} alt="" onError={(event) => { if (fallback && event.currentTarget.src !== fallback) event.currentTarget.src = fallback; }} /> : null; }
+function Thumb({ context, index, quality }: { context: PresentationContext; index: number | null; quality: string }) { const { base, state } = useProPresenterSession(); const activePlaylist = context.source === 'playlist' && isCurrentContext(state, context); const src = activePlaylist && index !== null ? activePlaylistThumbnailUrl(base, context, index, quality) : presentationThumbnailUrl(base, context, index, quality); const fallback = context.source === 'library' || (context.source === 'playlist' && !context.arrangementName) ? genericPresentationThumbnailUrl(base, context.presentationId, index, quality) : null; return src ? <img loading="lazy" src={src} alt="" onError={(event) => { if (fallback && event.currentTarget.src !== fallback) event.currentTarget.src = fallback; }} /> : null; }
 function PresentationBlock({ context, mode, quality, onRendered }: { context: PresentationContext; mode: 'preview' | 'text'; quality: string; onRendered: () => void }) {
   const { state, commands } = useProPresenterSession(); const readable = canReadArrangementCues(state, context); const query = usePresentationCues(context); const slides = query.data ?? []; const active = currentCueIndex(state, context);
   useEffect(() => { if (slides.length) onRendered(); }, [slides.length, onRendered]);
@@ -57,7 +57,7 @@ function Remote() {
   const { base, state, connection, commands } = useProPresenterSession(); const [mode, setMode] = useState<RemoteMode>('auto');
   const activeCues = useActivePresentationCues(); const cues = activeCues.data ?? []; const context = state?.playlistItem ?? null;
   const current = state?.slideIndex ?? null; const display = remoteDisplayMode(mode, state?.currentCue ?? null); const slideOutput = state?.outputLayers?.slide !== false;
-  const playlistPreview = context && isCurrentContext(state, context) ? presentationThumbnailUrl(base, context, current, '512') : null;
+  const playlistPreview = context && isCurrentContext(state, context) && current !== null ? activePlaylistThumbnailUrl(base, context, current, '512') : null;
   const preview = display === 'preview' && slideOutput ? playlistPreview ?? genericPresentationThumbnailUrl(base, state?.presentationId ?? null, current, '512') : null;
   const groups = useMemo(() => groupStarts(cues), [cues]); const currentGroup = activeGroupKey(cues, current);
   const mixedOutput = slideOutput && Boolean(state?.outputLayers && (state.outputLayers.media || state.outputLayers.videoInput || state.outputLayers.props || state.outputLayers.announcements));

@@ -4,7 +4,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProPresenterClient } from './propresenter-client';
-import { ProPresenterSessionProvider, readSnapshot, useProPresenterSession, type ProPresenterSession } from './propresenter-session';
+import { ProPresenterSessionProvider, activePlaylistThumbnailUrl, readSnapshot, useProPresenterSession, type ProPresenterSession } from './propresenter-session';
+import { asPlaylistItemIndex } from './propresenter';
 
 const id = (uuid: string, name = uuid, index = 0) => ({ uuid, name, index });
 const active = { presentation: { playlist: id('playlist-a'), item: id('item-a', 'Item A', 1) }, announcements: { playlist: null, item: null } };
@@ -51,6 +52,13 @@ describe('canonical snapshot transitions', () => {
     expect(state.playlistId).toBeNull();
     expect(state.currentCue).toBeNull();
     expect(state.outputLayers).toBeNull();
+  });
+});
+
+describe('thumbnail endpoint selection', () => {
+  it('uses the active playlist thumbnail endpoint for the current playlist item', () => {
+    const context = { source: 'playlist' as const, playlistId: 'playlist-a', playlistName: 'Playlist A', playlistItemId: 'item-a', playlistItemIndex: asPlaylistItemIndex(7)!, presentationId: 'presentation-a', arrangementName: null, kind: 'presentation' as const, name: 'Item A', cacheKey: 'playlist-a:item-a:7:presentation:default' };
+    expect(activePlaylistThumbnailUrl('http://host:1025', context, 0, '256')).toBe('http://host:1025/v1/playlist/active/presentation/7/thumbnail/0?quality=256');
   });
 });
 
