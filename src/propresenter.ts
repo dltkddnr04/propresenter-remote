@@ -7,6 +7,7 @@ import type {
   PlaylistTreeResponse,
   PresentationPositionResponse,
   PresentationResponse,
+  LayerStatusResponse,
   SlideStatusResponse,
 } from './propresenter-client';
 
@@ -22,6 +23,8 @@ export const asArrangementCueIndex = (value: number) => nonNegativeIndex(value) 
 export const asPlaylistItemIndex = (value: number) => nonNegativeIndex(value) as PlaylistItemIndex | null;
 
 export type Cue = { uuid: string | null; text: string; notes: string };
+/** The active audience layers as reported by /v1/status/layers. */
+export type OutputLayers = { videoInput: boolean; media: boolean; slide: boolean; announcements: boolean; props: boolean; messages: boolean; audio: boolean };
 export type PlaylistItemKind = 'presentation' | 'placeholder' | 'header' | 'media' | 'audio' | 'livevideo';
 export type PlaylistItemContext = {
   source: 'playlist'; playlistId: string; playlistName: string; playlistItemId: string; playlistItemIndex: PlaylistItemIndex;
@@ -36,6 +39,7 @@ export type CanonicalState = {
   presentationId: string | null; presentationName: string | null; arrangementName: string | null;
   /** Pair is read only from /v1/presentation/slide_index. */ slideIndex: ArrangementCueIndex | null;
   currentCue: Cue | null; nextCue: Cue | null;
+  /** Avoids presenting a stale slide as the whole audience output when the slide layer is clear. */ outputLayers: OutputLayers | null;
   /** Playlist-scoped identity, including arrangement name, when its detail has loaded. */ playlistItem: PlaylistItemContext | null;
 };
 export type Playlist = { id: string; name: string; depth: number };
@@ -51,9 +55,12 @@ export function acceptCanonicalSnapshot(previous: CanonicalState | null, candida
 const nameOf = (id: { name: string } | undefined, fallback: string) => id?.name || fallback;
 const identifier = (id: { uuid: string; name: string; index: number } | undefined | null) => id?.uuid || null;
 const cue = (value: SlideStatusResponse['current'] | undefined): Cue | null => value ? { uuid: value.uuid || null, text: value.text.trim(), notes: value.notes.trim() } : null;
+function outputLayers(value: LayerStatusResponse | null): OutputLayers | null {
+  return value ? { videoInput: value.video_input, media: value.media, slide: value.slide, announcements: value.announcements, props: value.props, messages: value.messages ?? false, audio: value.audio } : null;
+}
 
 /** The position pair is transport-authoritative; no active-presentation ID is merged into it. */
-export function normalizeCanonicalState(input: { revision: number; position: PresentationPositionResponse; activePlaylist: PlaylistActiveResponse; status: SlideStatusResponse | null }): CanonicalState {
+export function normalizeCanonicalState(input: { revision: number; position: PresentationPositionResponse; activePlaylist: PlaylistActiveResponse; status: SlideStatusResponse | null; layers?: LayerStatusResponse | null }): CanonicalState {
   const position = input.position.presentation_index ?? null;
   const active = input.activePlaylist.presentation;
   return {
@@ -61,7 +68,7 @@ export function normalizeCanonicalState(input: { revision: number; position: Pre
     playlistItemId: identifier(active?.item), playlistItemIndex: asPlaylistItemIndex(active?.item?.index ?? -1),
     presentationId: position?.presentation_id?.uuid ?? null, presentationName: position?.presentation_id?.name ?? null,
     arrangementName: null, slideIndex: position ? asArrangementCueIndex(position.index) : null,
-    currentCue: cue(input.status?.current), nextCue: cue(input.status?.next), playlistItem: null,
+    currentCue: cue(input.status?.current), nextCue: cue(input.status?.next), outputLayers: outputLayers(input.layers ?? null), playlistItem: null,
   };
 }
 
@@ -88,13 +95,24 @@ export function enrichPlaylistContext(state: CanonicalState, response: PlaylistR
   if (!response || !state.playlistId || response.id.uuid !== state.playlistId || !state.playlistItemId) return state;
   const item = normalizePlaylistItems(response).find((candidate) => candidate.id === state.playlistItemId && candidate.index === state.playlistItemIndex);
   const context = item ? playlistItemContext({ id: response.id.uuid, name: response.id.name }, item) : null;
-  return { ...state, arrangementName: context?.arrangementName ?? null, playlistItem: context };
+  // The active playlist endpoint and slide_index are separate wire reads. Do
+  // not combine an item from one transition with a presentation from another.
+  const coherent = context?.kind === 'presentation' && context.presentationId === state.presentationId ? context : null;
+  return { ...state, arrangementName: coherent?.arrangementName ?? null, playlistItem: coherent };
 }
 export function isCurrentContext(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): boolean {
-  return Boolean(state && context?.source === 'playlist' && state.playlistId === context.playlistId && state.playlistItemId === context.playlistItemId && state.playlistItemIndex === context.playlistItemIndex && state.presentationId === context.presentationId);
+  if (!state || !context) return false;
+  if (context.source === 'library') return state.playlistId === null && state.playlistItemId === null && state.presentationId === context.presentationId;
+  return state.playlistId === context.playlistId && state.playlistItemId === context.playlistItemId && state.playlistItemIndex === context.playlistItemIndex && state.presentationId === context.presentationId;
 }
 export function currentCueIndex(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): ArrangementCueIndex | null { return isCurrentContext(state, context) ? state!.slideIndex : null; }
 export function canTriggerPresentationCue(state: CanonicalState | null | undefined, context: PresentationContext): boolean { return context.source === 'library' || isCurrentContext(state, context); }
+export function canReadArrangementCues(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): boolean {
+  return Boolean(context?.source !== 'playlist' || !context.arrangementName || isCurrentContext(state, context));
+}
+export function activeGroupKey(slides: Slide[], cueIndex: ArrangementCueIndex | null): string | null {
+  return cueIndex === null ? null : slides.find((slide) => slide.cueIndex === cueIndex)?.groupKey ?? null;
+}
 
 export function flattenSlides(response: PresentationResponse | ActivePresentationResponse, scope: 'presentation' | 'active-arrangement'): Slide[] {
   const candidate: unknown = response && typeof response === 'object' && 'presentation' in response ? response.presentation : response;

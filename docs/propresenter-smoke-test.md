@@ -14,3 +14,8 @@
 10. Remote의 그룹 버튼을 누른다. 현재 presentation에 존재하는 그룹만 표시되고 해당 그룹의 첫 cue로 이동하는지 확인한다.
 11. Controller에서 현재 슬라이드 따라가기를 켠다. 현재 카드가 workspace의 위쪽 약 3분의 1 지점으로 이동하고, 수동 스크롤 시 추적이 해제되는지 확인한다.
 12. 연결 정보 버튼을 눌러 IP와 포트를 변경한다. 연결 모달의 오류가 session command 오류와 섞이지 않고, 새 연결에서 두 화면이 같은 상태를 표시하는지 확인한다.
+13. Controller에서 다른 playlist/library presentation을 탐색한 뒤 `현재 슬라이드 따라가기`를 누른다. 실제 active playlist item으로 즉시 복귀하고, 현재 카드가 그 cue로 스크롤되는지 확인한다.
+14. Library presentation을 직접 실행한다. Controller의 선택 표시와 Remote의 current/next text, 미리보기, 그룹이 실제 active presentation과 일치하는지 확인한다.
+15. 같은 이름의 그룹을 두 개 만든 뒤 각 그룹을 Remote에서 누른다. 이름이 아닌 ProPresenter group index로 각각의 올바른 첫 cue가 실행되는지 확인한다.
+16. Clear 또는 slide layer를 끈 상태와 media/video input/prop을 함께 켠 상태를 각각 확인한다. slide layer가 꺼진 경우 Remote가 이전 presentation slide를 출력처럼 보이지 않으며, 합성 출력인 경우에는 이를 표시하는지 확인한다.
+17. Remote의 Next/Previous를 빠르게 연속 입력한다. 각 입력이 순서대로 ProPresenter에 전달되고, command HTTP 성공 직후가 아니라 실제 canonical state 갱신 후에 두 화면이 같은 cue를 표시하는지 확인한다.

@@ -6,7 +6,10 @@ describe('session connection health', () => {
 
   it('starts connecting before the first successful snapshot', () => {
     expect(connectionHealth({ isError: false, error: null }, null, null, 1000).status).toBe('connecting');
-    expect(connectionHealth({ isError: true, error: new Error('offline') }, null, null, 1000).status).toBe('connecting');
+  });
+
+  it('reports an initial polling failure instead of remaining in checking forever', () => {
+    expect(connectionHealth({ isError: true, error: new Error('offline') }, null, null, 1000)).toEqual({ status: 'error', error: 'offline' });
   });
 
   it('keeps the last known good state connected during the grace window', () => {

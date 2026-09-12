@@ -8,6 +8,7 @@ export type PresentationPositionResponse = paths['/v1/presentation/slide_index']
 export type ActivePresentationResponse = paths['/v1/presentation/active']['get']['responses'][200]['content']['application/json'];
 export type PresentationResponse = paths['/v1/presentation/{uuid}']['get']['responses'][200]['content']['application/json'];
 export type SlideStatusResponse = paths['/v1/status/slide']['get']['responses'][200]['content']['application/json'];
+export type LayerStatusResponse = paths['/v1/status/layers']['get']['responses'][200]['content']['application/json'];
 export type LibrariesResponse = paths['/v1/libraries']['get']['responses'][200]['content']['application/json'];
 export type LibraryResponse = paths['/v1/library/{library_id}']['get']['responses'][200]['content']['application/json'];
 
@@ -201,6 +202,13 @@ function isSlideStatus(value: unknown): value is SlideStatusResponse {
   if (!isObject(value) || !Object.keys(value).every((key) => key === 'current' || key === 'next')) return false;
   return (!has(value, 'current') || value.current === null || isSlide(value.current))
     && (!has(value, 'next') || value.next === null || isSlide(value.next));
+}
+
+function isLayerStatus(value: unknown): value is LayerStatusResponse {
+  if (!isObject(value)) return false;
+  const required = ['video_input', 'media', 'slide', 'announcements', 'props', 'audio'];
+  if (!required.every((key) => has(value, key) && typeof value[key] === 'boolean')) return false;
+  return !has(value, 'messages') || typeof value.messages === 'boolean';
 }
 
 function isPresentation(value: unknown): boolean {
@@ -409,6 +417,13 @@ function decodeSlideStatus(value: unknown): SlideStatusResponse {
   rejectShape(rootKeys(value));
 }
 
+function decodeLayerStatus(value: unknown): LayerStatusResponse {
+  if (isLayerStatus(value)) return value;
+  if (!isObject(value)) rejectShape();
+  if (has(value, 'data') && isLayerStatus(value.data)) return value.data;
+  rejectShape(rootKeys(value));
+}
+
 function decodeActivePresentation(value: unknown): ActivePresentationResponse {
   if (isActivePresentationResponse(value)) return value;
   if (!isObject(value)) rejectShape();
@@ -496,6 +511,7 @@ export class ProPresenterClient {
     if (path.startsWith('/v1/presentation/slide_index')) return decodePresentationPosition;
     if (path.startsWith('/v1/playlist/active')) return decodeActivePlaylist;
     if (path.startsWith('/v1/status/slide')) return decodeSlideStatus;
+    if (path.startsWith('/v1/status/layers')) return decodeLayerStatus;
     if (path.startsWith('/v1/presentation/active')) return decodeActivePresentation;
     if (path === '/v1/playlists?chunked=false') return (value) => decodePlaylistTree(value);
     if (path.startsWith('/v1/playlist/')) return decodePlaylist;
@@ -512,6 +528,7 @@ export class ProPresenterClient {
   presentationPosition(signal?: AbortSignal) { return this.getJson<PresentationPositionResponse>('/v1/presentation/slide_index?chunked=false', signal); }
   activePlaylist(signal?: AbortSignal) { return this.getJson<PlaylistActiveResponse>('/v1/playlist/active?chunked=false', signal); }
   slideStatus(signal?: AbortSignal) { return this.getJson<SlideStatusResponse>('/v1/status/slide?chunked=false', signal); }
+  layerStatus(signal?: AbortSignal) { return this.getJson<LayerStatusResponse>('/v1/status/layers?chunked=false', signal); }
   activePresentation(signal?: AbortSignal) { return this.getJson<ActivePresentationResponse>('/v1/presentation/active?chunked=false', signal); }
   playlists(signal?: AbortSignal) { return this.getJson<PlaylistTreeResponse>('/v1/playlists?chunked=false', signal); }
   playlist(playlistId: string, signal?: AbortSignal) { return this.getJson<PlaylistResponse>(`/v1/playlist/${encodeURIComponent(playlistId)}?chunked=false`, signal); }
