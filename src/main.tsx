@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrangementCueIndex, CanonicalState, LibraryPresentationContext, Playlist, PlaylistItem, PlaylistItemContext, PresentationContext, activeGroupKey, activePresentationContext, canTriggerPresentationCue, currentCueIndex, groupStarts, isCurrentContext, libraryPresentationContext, playlistItemContext, remoteDisplayMode, slideText } from './propresenter';
+import { CanonicalState, LibraryPresentationContext, Playlist, PlaylistItem, PlaylistItemContext, PresentationContext, activeGroupKey, activePresentationContext, currentCueIndex, groupStarts, isCurrentContext, libraryPresentationContext, playlistItemContext, remoteDisplayMode, slideText } from './propresenter';
 import { isNativeProxy } from './propresenter-client';
 import { ProPresenterSessionProvider, activePlaylistThumbnailUrl, genericPresentationThumbnailUrl, useActivePresentationCues, useLibraries, useLibraryItems, usePlaylistItems, usePlaylists, usePresentationCues, useProPresenterSession } from './propresenter-session';
 import './styles.css';
@@ -31,8 +31,7 @@ function PresentationBlock({ context, mode, quality, onRendered, followTarget = 
   const query = usePresentationCues(context);
   const slides = query.data ?? [];
   const active = currentCueIndex(state, context);
-  const canTriggerCue = canTriggerPresentationCue(state, context);
-  const isInactiveArrangement = context.source === 'playlist' && Boolean(context.arrangementName) && !isCurrentContext(state, context);
+  const arrangementLabel = context.source === 'playlist' && context.arrangementName ? ` · ${context.arrangementName}` : '';
 
   useEffect(() => {
     if (followTarget && slides.length) onRendered?.();
@@ -42,7 +41,7 @@ function PresentationBlock({ context, mode, quality, onRendered, followTarget = 
     <section className="presentation-block" data-context-key={context.cacheKey} data-presentation-id={context.presentationId ?? ''}>
       <div className="presentation-heading">
         <strong>{context.name}</strong>
-        <small>{query.isLoading ? '불러오는 중…' : `${slides.length} slides${isInactiveArrangement ? ' · 기본 cue 보기' : ''}`}</small>
+        <small>{query.isLoading && !slides.length ? '불러오는 중…' : `${slides.length} slides${arrangementLabel}`}</small>
       </div>
       {query.error && <p className="form-error">프레젠테이션을 불러올 수 없습니다.</p>}
       <div className="slide-grid">
@@ -52,11 +51,10 @@ function PresentationBlock({ context, mode, quality, onRendered, followTarget = 
             className={`slide-card ${active === slide.cueIndex ? 'active' : ''}`}
             data-context-key={context.cacheKey}
             data-slide-index={slide.cueIndex}
-            disabled={!canTriggerCue}
-            title={!canTriggerCue ? '비활성 재생목록 항목은 읽기 전용이며 개별 cue를 실행할 수 없습니다.' : undefined}
             onClick={() => {
               if (context.source === 'library') void commands.triggerLibraryCue(context, slide.cueIndex).catch(() => undefined);
-              else void commands.triggerPresentationCue(slide.cueIndex as ArrangementCueIndex).catch(() => undefined);
+              else if (context.source === 'playlist') void commands.triggerPlaylistCue(context, slide).catch(() => undefined);
+              else void commands.triggerPresentationCue(context, slide).catch(() => undefined);
             }}
           >
             <span className={`slide-preview ${mode === 'text' ? 'text-slide' : ''}`}>

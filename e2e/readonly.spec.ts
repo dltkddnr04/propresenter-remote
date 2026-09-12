@@ -40,8 +40,9 @@ test('production controller and remote converge on the real ProPresenter state',
       expect(controller.title).toContain(coherent.api.presentationName ?? '');
     }
 
-    // Browsing an inactive playlist presentation is read-only: it must load
-    // content without claiming that item is live or sending a trigger.
+    // Browsing an inactive playlist presentation must load its content without
+    // claiming that item is live. Live trigger verification belongs to the
+    // opt-in command suite, not this read-only production test.
     const inactiveItem = page.locator('.sidebar-item-button:not(.active)').first();
     if (await inactiveItem.count()) {
       const inactiveName = (await inactiveItem.innerText()).trim();

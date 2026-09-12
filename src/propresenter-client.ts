@@ -19,7 +19,7 @@ export class ProPresenterApiError extends Error {
     message: string,
     readonly path: string,
     readonly status: number | null = null,
-    readonly kind: 'network' | 'http' | 'decode' = 'network',
+    readonly kind: 'network' | 'http' | 'decode' | 'command' = 'network',
   ) {
     super(message);
     this.name = 'ProPresenterApiError';
@@ -463,15 +463,34 @@ export class ProPresenterClient {
 
   private async request(path: string, signal?: AbortSignal): Promise<Response> {
     const controller = new AbortController();
-    const abort = () => controller.abort();
+    let rejectRace: ((reason?: unknown) => void) | null = null;
+    const abortError = () => {
+      const error = new Error('The operation was aborted');
+      error.name = 'AbortError';
+      return error;
+    };
+    const abort = () => {
+      controller.abort();
+      rejectRace?.(abortError());
+    };
+    const cancellation = new Promise<never>((_, reject) => { rejectRace = reject; });
     signal?.addEventListener('abort', abort, { once: true });
-    const timeout = globalThis.setTimeout(abort, REQUEST_TIMEOUT_MS);
+    const timeout = globalThis.setTimeout(() => {
+      controller.abort();
+      rejectRace?.(new ProPresenterApiError(`ProPresenter 요청 시간 초과: ${path}`, path, null, 'network'));
+    }, REQUEST_TIMEOUT_MS);
     try {
-      const response = await this.fetcher.call(globalThis, `${this.base}${path}`, {
+      if (signal?.aborted) abort();
+      const fetchPromise = Promise.resolve().then(() => this.fetcher.call(globalThis, `${this.base}${path}`, {
         cache: 'no-store',
         headers: { Accept: 'application/json' },
         signal: controller.signal,
-      });
+      }));
+      // A non-standard fetch receiver may ignore AbortController. Keep its
+      // eventual rejection observed while the explicit race still guarantees
+      // that every request settles within the client deadline.
+      void fetchPromise.catch(() => undefined);
+      const response = await Promise.race([fetchPromise, cancellation]);
       if (!response.ok) throw new ProPresenterApiError(`${response.status} ${path}`, path, response.status, 'http');
       return response;
     } catch (error) {
@@ -539,6 +558,7 @@ export class ProPresenterClient {
   next(signal?: AbortSignal) { return this.command('/v1/trigger/next', signal); }
   previous(signal?: AbortSignal) { return this.command('/v1/trigger/previous', signal); }
   triggerActiveArrangementCue(index: number, signal?: AbortSignal) { return this.command(`/v1/presentation/active/${index}/trigger`, signal); }
+  triggerActivePlaylistPresentationCue(index: number, signal?: AbortSignal) { return this.command(`/v1/playlist/active/presentation/${index}/trigger`, signal); }
   triggerActivePresentationGroup(group: string, signal?: AbortSignal) { return this.command(`/v1/presentation/active/group/${encodeURIComponent(group)}/trigger`, signal); }
   triggerPlaylistItem(playlistId: string, itemIndex: number, signal?: AbortSignal) { return this.command(`/v1/playlist/${encodeURIComponent(playlistId)}/${itemIndex}/trigger`, signal); }
   triggerLibraryCue(libraryId: string, presentationId: string, index: number, signal?: AbortSignal) { return this.command(`/v1/library/${encodeURIComponent(libraryId)}/${encodeURIComponent(presentationId)}/${index}/trigger`, signal); }

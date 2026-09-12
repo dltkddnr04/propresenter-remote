@@ -7,7 +7,7 @@
 3. Remote에서 Next와 Previous를 한 번씩 누른다. 한 번의 입력마다 한 번만 실행되고, 실제 ProPresenter 상태가 화면에 반영되는지 확인한다.
 4. active arrangement 내부의 cue를 Controller에서 선택한다. 선택한 arrangement의 cue 순서로 이동하는지 확인한다.
 5. `presentation → media → presentation` playlist를 만들고 Next를 누른다. 앱이 다음 presentation을 미리 추측하지 않고 ProPresenter의 실제 media/item 상태를 따라가는지 확인한다.
-6. 비활성 arrangement를 탐색한다. 해당 presentation의 기본 cue가 `기본 cue 보기`로 표시되고 내용은 계속 열리지만, cue 버튼은 읽기 전용 disabled 상태이며 잘못된 generic presentation trigger가 실행되지 않는지 확인한다.
+6. 비활성 arrangement를 탐색한다. 내용과 arrangement context가 유지되고 cue 버튼은 활성 상태인지 확인한다. cue를 누르면 해당 playlist item을 먼저 활성화한 뒤 활성 arrangement에서 같은 cue를 식별해 실행하며, 식별할 수 없는 cue는 명확한 command error로 끝나고 generic presentation trigger를 호출하지 않아야 한다.
 7. 명령 endpoint를 일시적으로 실패시키거나 잘못된 cue를 실행한다. command error가 보이더라도 연결 상태는 정상 polling이 계속되는 한 `연결됨`으로 유지되는지 확인한다.
 8. 빠르게 여러 cue를 변경하거나 본체와 Remote를 번갈아 조작한다. 이전 polling 응답으로 최신 화면이 되돌아가지 않는지 확인한다.
 9. Remote의 텍스트, 미리보기, 자동 모드를 각각 확인한다. 텍스트 모드는 current/next text, 미리보기와 자동의 이미지 화면은 current만 표시해야 한다.
@@ -18,4 +18,4 @@
 14. Library presentation을 직접 실행한다. Controller의 선택 표시와 Remote의 current/next text, 미리보기, 그룹이 실제 active presentation과 일치하는지 확인한다.
 15. 같은 이름의 그룹을 두 개 만든 뒤 각 그룹을 Remote에서 누른다. 이름이 아닌 ProPresenter group index로 각각의 올바른 첫 cue가 실행되는지 확인한다.
 16. Clear 또는 slide layer를 끈 상태와 media/video input/prop을 함께 켠 상태를 각각 확인한다. slide layer가 꺼진 경우 Remote가 이전 presentation slide를 출력처럼 보이지 않으며, 합성 출력인 경우에는 이를 표시하는지 확인한다.
-17. Remote의 Next/Previous를 빠르게 연속 입력한다. 각 입력이 순서대로 ProPresenter에 전달되고, 각 명령 뒤 canonical 재조회가 끝난 다음 다음 명령이 실행되는지 확인한다. ProPresenter가 204 이후 상태 반영을 지연하는 경우에는 실제 cue 반영이 끝난 뒤 최종 위치도 확인한다.
+17. Remote의 Next/Previous를 빠르게 연속 입력한다. 각 입력이 순서대로 ProPresenter에 전달되고, HTTP 명령 응답 순서가 보존되는지 확인한다. canonical 상태 반영은 백그라운드에서 수렴하며, ProPresenter가 204 이후 상태 반영을 지연하는 경우 최종 실제 위치가 입력 순서와 일치하는지 확인한다.

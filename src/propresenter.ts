@@ -49,6 +49,8 @@ export type Library = { id: string; name: string };
 export type PlaylistItem = { id: string | null; index: PlaylistItemIndex; name: string; type: PlaylistItemKind; presentationId: string | null; arrangementName: string | null };
 export type LibraryPresentation = { id: string; name: string };
 export type Slide = { cueIndex: PresentationCueIndex | ArrangementCueIndex; text: string; notes: string; label: string; groupName: string; groupKey: string; groupColor: string | null; groupIndex: PresentationGroupIndex };
+/** Identity carried from a rendered cue into the shared command layer. */
+export type PresentationCueTarget = Pick<Slide, 'cueIndex' | 'text' | 'notes' | 'label' | 'groupName' | 'groupKey'>;
 
 export function acceptCanonicalSnapshot(previous: CanonicalState | null, candidate: CanonicalState): CanonicalState {
   return previous && candidate.revision < previous.revision ? previous : candidate;
@@ -120,7 +122,13 @@ export function isCurrentContext(state: CanonicalState | null | undefined, conte
   return state.playlistId === context.playlistId && state.playlistItemId === context.playlistItemId && state.playlistItemIndex === context.playlistItemIndex && state.presentationId === context.presentationId;
 }
 export function currentCueIndex(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): ArrangementCueIndex | null { return isCurrentContext(state, context) ? state!.slideIndex : null; }
-export function canTriggerPresentationCue(state: CanonicalState | null | undefined, context: PresentationContext): boolean { return context.source !== 'playlist' || isCurrentContext(state, context); }
+/** Playlist/item identity used before a playlist cue command may target the active arrangement. */
+export function isActivePlaylistContext(state: CanonicalState | null | undefined, context: PlaylistItemContext | null | undefined): boolean {
+  // The playlist item identity is the authoritative activation boundary. The
+  // arrangement is selected on that item; the active presentation read below
+  // still validates the clicked cue before any numeric trigger is sent.
+  return Boolean(state && context && context.source === 'playlist' && isCurrentContext(state, context));
+}
 export function activeGroupKey(slides: Slide[], cueIndex: ArrangementCueIndex | null): string | null {
   return cueIndex === null ? null : slides.find((slide) => slide.cueIndex === cueIndex)?.groupKey ?? null;
 }
