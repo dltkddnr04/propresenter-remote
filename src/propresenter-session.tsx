@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiBase, ProPresenterClient } from './propresenter-client';
 import {
   ArrangementCueIndex, CanonicalState, ConnectionSettings, LibraryPresentationContext, PlaylistItemContext, PresentationContext,
-  PresentationGroupIndex, acceptCanonicalSnapshot, asArrangementCueIndex, canReadArrangementCues, currentCueIndex, enrichPlaylistContext, flattenSlides, isCurrentContext, normalizeCanonicalState,
+  PresentationGroupIndex, acceptCanonicalSnapshot, asArrangementCueIndex, currentCueIndex, enrichPlaylistContext, flattenSlides, isCurrentContext, normalizeCanonicalState,
   normalizeLibraries, normalizeLibraryItems, normalizePlaylistItems, normalizePlaylistTree,
 } from './propresenter';
 
@@ -140,8 +140,8 @@ export function useLibraries() { const { base, client } = useProPresenterSession
 export function useLibraryItems(libraryId: string | null, enabled = true) { const { base, client } = useProPresenterSession(); return useQuery({ queryKey: ['propresenter-library-items', base, libraryId], queryFn: ({ signal }) => client.library(libraryId!, signal).then(normalizeLibraryItems), enabled: enabled && Boolean(libraryId), retry: 1, refetchInterval: enabled ? 5_000 : false }); }
 
 export function usePresentationCues(context: PresentationContext | null | undefined, options: { enabled?: boolean } = {}) {
-  const { base, client, state } = useProPresenterSession(); const activeArrangement = isCurrentContext(state, context); const readable = canReadArrangementCues(state, context);
-  return useQuery({ queryKey: ['propresenter-presentation-cues', base, context?.cacheKey, activeArrangement ? 'active-arrangement' : readable ? 'presentation' : 'unavailable-arrangement'], queryFn: ({ signal }) => activeArrangement ? client.activePresentation(signal).then((response) => flattenSlides(response, 'active-arrangement')) : client.presentation(context!.presentationId!, signal).then((response) => flattenSlides(response, 'presentation')), enabled: Boolean(context?.presentationId) && readable && options.enabled !== false, retry: 1, refetchInterval: activeArrangement ? 1_500 : 5_000 });
+  const { base, client, state } = useProPresenterSession(); const activeArrangement = isCurrentContext(state, context);
+  return useQuery({ queryKey: ['propresenter-presentation-cues', base, context?.cacheKey, activeArrangement ? 'active-arrangement' : 'presentation'], queryFn: ({ signal }) => activeArrangement ? client.activePresentation(signal).then((response) => flattenSlides(response, 'active-arrangement')) : client.presentation(context!.presentationId!, signal).then((response) => flattenSlides(response, 'presentation')), enabled: Boolean(context?.presentationId) && options.enabled !== false, retry: 1, refetchInterval: activeArrangement ? 1_500 : 5_000 });
 }
 export function useActivePresentationCues() {
   const { base, client, state } = useProPresenterSession(); const enabled = Boolean(state?.presentationId) && state?.outputLayers?.slide !== false;

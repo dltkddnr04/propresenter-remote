@@ -65,7 +65,7 @@ describe('application bootstrap integration', () => {
     else Reflect.deleteProperty(navigator, 'permissions');
   });
 
-  async function mountApp(permissionQuery: () => Promise<PermissionStatus>, responder = responseFor): Promise<string[]> {
+  async function mountApp(permissionQuery: () => Promise<PermissionStatus>, responder: (pathname: string) => Response | Promise<Response> = responseFor): Promise<string[]> {
     const requests: string[] = [];
     vi.stubGlobal('fetch', vi.fn(function (this: unknown, input: RequestInfo | URL): Promise<Response> {
       if (this !== globalThis) throw new TypeError('Illegal invocation');
@@ -130,6 +130,115 @@ describe('application bootstrap integration', () => {
     await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('A'));
   });
 
+  it('adopts a late active playlist while following instead of staying on the first playlist', async () => {
+    const playlists = [
+      { id: { uuid: 'playlist-other', name: 'Other Playlist', index: 0 }, type: 'playlist' },
+      { id: { uuid: 'playlist-active', name: 'Active Playlist', index: 1 }, type: 'playlist' },
+    ];
+    const item = { id: { uuid: 'item-active', name: 'Active Item', index: 0 }, type: 'presentation', presentation_info: { presentation_uuid: 'presentation-active' }, is_hidden: false, is_pco: false };
+    const presentation = { presentation: { groups: [{ name: 'Group', color: null, slides: [{ text: 'Active slide', notes: '', label: '' }] }] } };
+    const responder = async (pathname: string) => {
+      if (pathname === '/v1/playlists') return new Response(JSON.stringify(playlists), { status: 200 });
+      if (pathname === '/v1/playlist/active') {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return new Response(JSON.stringify({ presentation: { playlist: playlists[1].id, item: item.id }, announcements: { playlist: null, item: null } }), { status: 200 });
+      }
+      if (pathname === '/v1/presentation/slide_index') return new Response(JSON.stringify({ presentation_index: { index: 0, presentation_id: { uuid: 'presentation-active', name: 'Active Presentation', index: 0 } } }), { status: 200 });
+      if (pathname === '/v1/playlist/playlist-active') return new Response(JSON.stringify({ id: playlists[1].id, items: [item] }), { status: 200 });
+      if (pathname === '/v1/presentation/active') return new Response(JSON.stringify(presentation), { status: 200 });
+      return responseFor(pathname);
+    };
+    await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
+    await vi.waitFor(() => expect(container?.querySelector('.sidebar-collection-item.active')?.textContent).toBe('Active Playlist'));
+    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Active Item'));
+  });
+
+  it('keeps inactive playlist presentations browsable without marking them live', async () => {
+    const playlistId = { uuid: 'playlist-a', name: 'Playlist A', index: 0 };
+    const item = (uuid: string, name: string, index: number, presentationUuid: string, arrangement_name?: string) => ({
+      id: { uuid, name, index }, type: 'presentation', presentation_info: { presentation_uuid: presentationUuid, ...(arrangement_name ? { arrangement_name } : {}) }, is_hidden: false, is_pco: false,
+    });
+    const presentation = (name: string) => ({ groups: [{ name: 'Group', color: null, slides: [{ text: `${name} slide 1`, notes: '', label: '1' }, { text: `${name} slide 2`, notes: '', label: '2' }] }], has_timeline: false, destination: 'presentation' });
+    const responder = (pathname: string) => {
+      if (pathname === '/v1/presentation/slide_index') return new Response(JSON.stringify({ presentation_index: { index: 0, presentation_id: { uuid: 'presentation-a', name: 'Presentation A', index: 0 } } }), { status: 200 });
+      if (pathname === '/v1/playlist/active') return new Response(JSON.stringify({ presentation: { playlist: playlistId, item: { uuid: 'item-a', name: 'Presentation A', index: 0 } }, announcements: { playlist: null, item: null } }), { status: 200 });
+      if (pathname === '/v1/playlists') return new Response(JSON.stringify([{ id: playlistId, type: 'playlist', playlists: [] }]), { status: 200 });
+      if (pathname === '/v1/playlist/playlist-a') return new Response(JSON.stringify({ id: playlistId, items: [item('item-a', 'Presentation A', 0, 'presentation-a'), item('item-b', 'Presentation B', 1, 'presentation-shared', 'Full'), item('item-c', 'Presentation C', 2, 'presentation-shared', 'Chorus Only')] }), { status: 200 });
+      if (pathname === '/v1/presentation/active') return new Response(JSON.stringify({ presentation: presentation('Presentation A') }), { status: 200 });
+      if (pathname === '/v1/presentation/presentation-shared') return new Response(JSON.stringify(presentation('Shared Presentation')), { status: 200 });
+      return responseFor(pathname);
+    };
+    await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
+    await vi.waitFor(() => expect(container?.querySelectorAll('.sidebar-item-button')).toHaveLength(3));
+    const items = container?.querySelectorAll<HTMLButtonElement>('.sidebar-item-button');
+    await act(async () => items?.[1].click());
+    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Presentation B'));
+    expect(container?.textContent).not.toContain('활성화 필요');
+    await vi.waitFor(() => expect(container?.querySelectorAll('.slide-card')).toHaveLength(2));
+    expect(container?.querySelector('.presentation-heading small')?.textContent).toContain('기본 cue 보기');
+    expect(container?.querySelector('.slide-card.active')).toBeNull();
+    expect(container?.querySelector<HTMLButtonElement>('.slide-card')?.disabled).toBe(true);
+    expect(container?.querySelector<HTMLImageElement>('.slide-card img')?.src).toContain('/v1/presentation/presentation-shared/thumbnail/0');
+    expect(container?.querySelector('.slide-card')?.getAttribute('data-context-key')).toContain('item-b:1:presentation-shared:Full');
+
+    await act(async () => container?.querySelectorAll<HTMLButtonElement>('.sidebar-item-button')[2].click());
+    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Presentation C'));
+    await vi.waitFor(() => expect(container?.querySelectorAll('.slide-card')).toHaveLength(2));
+    expect(container?.querySelector('.slide-card.active')).toBeNull();
+    expect(container?.querySelector('.slide-card')?.getAttribute('data-context-key')).toContain('item-c:2:presentation-shared:Chorus Only');
+    await act(async () => container?.querySelector<HTMLButtonElement>('.top-follow-button')?.click());
+    await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Presentation A'));
+  });
+
+  it('handles Controller keyboard shortcuts without focus and ignores interactive targets', async () => {
+    const requests = await mountApp(async () => ({ state: 'granted' } as PermissionStatus));
+    const commandCount = () => requests.filter((url) => url.endsWith('/v1/trigger/next') || url.endsWith('/v1/trigger/previous')).length;
+    const nextEvent = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    const previousEvent = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+    nextEvent();
+    await vi.waitFor(() => expect(commandCount()).toBe(1));
+    previousEvent();
+    await vi.waitFor(() => expect(commandCount()).toBe(2));
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(commandCount()).toBe(3));
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', repeat: true, bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(commandCount()).toBe(3);
+    const input = document.createElement('input'); document.body.append(input);
+    const select = document.createElement('select'); document.body.append(select);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    select.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    expect(commandCount()).toBe(3);
+    input.remove(); select.remove();
+
+    await act(async () => container?.querySelector<HTMLButtonElement>('.top-nav button:last-of-type')?.click());
+    expect(container?.querySelector('[role="dialog"]')).not.toBeNull();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    expect(commandCount()).toBe(3);
+    await act(async () => container?.querySelector<HTMLButtonElement>('[role="dialog"] .icon-button')?.click());
+
+    container?.querySelector<HTMLButtonElement>('.sidebar-collection-item')?.focus();
+    nextEvent();
+    await vi.waitFor(() => expect(commandCount()).toBe(4));
+  });
+
+  it('does not install Controller global shortcuts on Remote', async () => {
+    const requests = await mountApp(async () => ({ state: 'granted' } as PermissionStatus));
+    const originalPathname = window.location.pathname;
+    window.history.pushState({}, '', '/remote');
+    try {
+      await act(async () => appRoot?.render(<QueryClientProvider client={queryClient!}><App /></QueryClientProvider>));
+      await vi.waitFor(() => expect(container?.querySelector('.remote-app')).not.toBeNull());
+      const triggerRequestsBefore = requests.filter((url) => url.endsWith('/v1/trigger/next') || url.endsWith('/v1/trigger/previous')).length;
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(requests.filter((url) => url.endsWith('/v1/trigger/next') || url.endsWith('/v1/trigger/previous')).length).toBe(triggerRequestsBefore);
+    } finally {
+      window.history.replaceState({}, '', originalPathname);
+    }
+  });
+
   it('renders a directly triggered Library presentation in Controller and Remote without playlist identity', async () => {
     const responder = (pathname: string) => {
       if (pathname === '/v1/presentation/slide_index') return new Response(JSON.stringify({ presentation_index: { index: 0, presentation_id: { uuid: 'presentation-a', name: 'Library A', index: 0 } } }), { status: 200 });
@@ -138,7 +247,7 @@ describe('application bootstrap integration', () => {
     };
     await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
     await vi.waitFor(() => expect(container?.querySelector('.presentation-heading strong')?.textContent).toBe('Library A'));
-    expect(container?.querySelector('.slide-card.active')?.textContent).toContain('1');
+    await vi.waitFor(() => expect(container?.querySelector('.slide-card.active')?.textContent).toContain('1'));
     const originalPathname = window.location.pathname;
     window.history.pushState({}, '', '/remote');
     try {

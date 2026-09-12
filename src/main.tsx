@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrangementCueIndex, CanonicalState, LibraryPresentationContext, Playlist, PlaylistItemContext, PresentationContext, activeGroupKey, activePlaylistPresentationContext, activePresentationContext, canReadArrangementCues, canTriggerPresentationCue, currentCueIndex, groupStarts, isCurrentContext, libraryPresentationContext, playlistItemContext, remoteDisplayMode, slideText } from './propresenter';
+import { ArrangementCueIndex, CanonicalState, LibraryPresentationContext, Playlist, PlaylistItemContext, PresentationContext, activeGroupKey, activePlaylistPresentationContext, activePresentationContext, canTriggerPresentationCue, currentCueIndex, groupStarts, isCurrentContext, libraryPresentationContext, playlistItemContext, remoteDisplayMode, slideText } from './propresenter';
 import { isNativeProxy } from './propresenter-client';
-import { ProPresenterSessionProvider, activePlaylistThumbnailUrl, genericPresentationThumbnailUrl, presentationThumbnailUrl, useActivePresentationCues, useLibraries, useLibraryItems, usePlaylistItems, usePlaylists, usePresentationCues, useProPresenterSession } from './propresenter-session';
+import { ProPresenterSessionProvider, activePlaylistThumbnailUrl, genericPresentationThumbnailUrl, useActivePresentationCues, useLibraries, useLibraryItems, usePlaylistItems, usePlaylists, usePresentationCues, useProPresenterSession } from './propresenter-session';
 import './styles.css';
 
 const settingsKey = 'propresenter-remote:connection';
@@ -25,12 +25,52 @@ function Panel({ modal = false, title, children, onClose }: { modal?: boolean; t
 function ConnectionForm({ initial, onConnect, onCancel }: { initial?: Settings | null; onConnect: (value: Settings) => void; onCancel?: () => void }) { const [host, setHost] = useState(initial?.host ?? ''); const [port, setPort] = useState(initial?.port ?? 1025); return <form onSubmit={(event) => { event.preventDefault(); onConnect({ host: host.trim(), port: Number(port) }); }}><label>PC IP 주소<input value={host} onChange={(event) => setHost(event.target.value)} required /></label><label>포트 번호<input type="number" value={port} min="1" max="65535" onChange={(event) => setPort(Number(event.target.value))} required /></label><div className="form-actions">{onCancel && <button className="secondary-button" type="button" onClick={onCancel}>취소</button>}<button>ProPresenter 연결</button></div></form>; }
 function UnsupportedBrowser() { return <Panel title="지원되지 않는 브라우저"><p className="intro">이 웹앱은 ProPresenter PC의 로컬 네트워크 접근 권한이 필요합니다.</p><p>지원 브라우저 예시: Chrome · Edge · Opera · Firefox</p></Panel>; }
 
-function Thumb({ context, index, quality }: { context: PresentationContext; index: number | null; quality: string }) { const { base, state } = useProPresenterSession(); const activePlaylist = context.source === 'playlist' && isCurrentContext(state, context); const src = activePlaylist && index !== null ? activePlaylistThumbnailUrl(base, context, index, quality) : presentationThumbnailUrl(base, context, index, quality); const fallback = context.source === 'library' || (context.source === 'playlist' && !context.arrangementName) ? genericPresentationThumbnailUrl(base, context.presentationId, index, quality) : null; return src ? <img loading="lazy" src={src} alt="" onError={(event) => { if (fallback && event.currentTarget.src !== fallback) event.currentTarget.src = fallback; }} /> : null; }
+function Thumb({ context, index, quality }: { context: PresentationContext; index: number | null; quality: string }) { const { base, state } = useProPresenterSession(); const activePlaylist = context.source === 'playlist' && isCurrentContext(state, context); const src = activePlaylist && index !== null ? activePlaylistThumbnailUrl(base, context, index, quality) : genericPresentationThumbnailUrl(base, context.presentationId, index, quality); return src ? <img loading="lazy" src={src} alt="" /> : null; }
 function PresentationBlock({ context, mode, quality, onRendered }: { context: PresentationContext; mode: 'preview' | 'text'; quality: string; onRendered: () => void }) {
-  const { state, commands } = useProPresenterSession(); const readable = canReadArrangementCues(state, context); const query = usePresentationCues(context); const slides = query.data ?? []; const active = currentCueIndex(state, context);
-  useEffect(() => { if (slides.length) onRendered(); }, [slides.length, onRendered]);
+  const { state, commands } = useProPresenterSession();
+  const query = usePresentationCues(context);
+  const slides = query.data ?? [];
+  const active = currentCueIndex(state, context);
   const canTriggerCue = canTriggerPresentationCue(state, context);
-  return <section className="presentation-block"><div className="presentation-heading"><strong>{context.name}</strong><small>{!readable ? '활성화 필요' : query.isLoading ? '불러오는 중…' : `${slides.length} slides`}</small></div>{query.error && <p className="form-error">프레젠테이션을 불러올 수 없습니다.</p>}{!readable && <p className="form-error">이 arrangement의 cue 순서는 항목을 활성화한 뒤에만 정확하게 표시됩니다.</p>}{!canTriggerCue && context.source === 'playlist' && <div className="form-actions"><button disabled={commands.pending} onClick={() => void commands.triggerPlaylistItem(context).catch(() => undefined)}>이 항목 활성화</button></div>}<div className="slide-grid">{slides.map((slide) => <button key={`${context.cacheKey}-${slide.cueIndex}`} className={`slide-card ${active === slide.cueIndex ? 'active' : ''}`} data-context-key={context.cacheKey} data-slide-index={slide.cueIndex} disabled={commands.pending || !canTriggerCue} title={!canTriggerCue ? '이 재생목록 항목을 먼저 활성화해야 개별 슬라이드를 실행할 수 있습니다.' : undefined} onClick={() => { if (context.source === 'library') void commands.triggerLibraryCue(context, slide.cueIndex).catch(() => undefined); else void commands.triggerPresentationCue(slide.cueIndex as ArrangementCueIndex).catch(() => undefined); }}><span className={`slide-preview ${mode === 'text' ? 'text-slide' : ''}`}>{mode === 'preview' ? <Thumb context={context} index={slide.cueIndex} quality={quality} /> : slideText(slide) || `${slide.cueIndex + 1}`}</span><span className="slide-meta" style={slide.groupColor ? { backgroundColor: slide.groupColor } : undefined}><span>{slide.cueIndex + 1}</span>{slide.groupName && <span>{slide.groupName}</span>}</span></button>)}</div></section>;
+  const isInactiveArrangement = context.source === 'playlist' && Boolean(context.arrangementName) && !isCurrentContext(state, context);
+
+  useEffect(() => {
+    if (slides.length) onRendered();
+  }, [slides.length, onRendered]);
+
+  return (
+    <section className="presentation-block">
+      <div className="presentation-heading">
+        <strong>{context.name}</strong>
+        <small>{query.isLoading ? '불러오는 중…' : `${slides.length} slides${isInactiveArrangement ? ' · 기본 cue 보기' : ''}`}</small>
+      </div>
+      {query.error && <p className="form-error">프레젠테이션을 불러올 수 없습니다.</p>}
+      <div className="slide-grid">
+        {slides.map((slide) => (
+          <button
+            key={`${context.cacheKey}-${slide.cueIndex}`}
+            className={`slide-card ${active === slide.cueIndex ? 'active' : ''}`}
+            data-context-key={context.cacheKey}
+            data-slide-index={slide.cueIndex}
+            disabled={commands.pending || !canTriggerCue}
+            title={!canTriggerCue ? '비활성 재생목록 항목은 읽기 전용이며 개별 cue를 실행할 수 없습니다.' : undefined}
+            onClick={() => {
+              if (context.source === 'library') void commands.triggerLibraryCue(context, slide.cueIndex).catch(() => undefined);
+              else void commands.triggerPresentationCue(slide.cueIndex as ArrangementCueIndex).catch(() => undefined);
+            }}
+          >
+            <span className={`slide-preview ${mode === 'text' ? 'text-slide' : ''}`}>
+              {mode === 'preview' ? <Thumb context={context} index={slide.cueIndex} quality={quality} /> : slideText(slide) || `${slide.cueIndex + 1}`}
+            </span>
+            <span className="slide-meta" style={slide.groupColor ? { backgroundColor: slide.groupColor } : undefined}>
+              <span>{slide.cueIndex + 1}</span>
+              {slide.groupName && <span>{slide.groupName}</span>}
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
 }
 function Sidebar({ source, setSource, selectedPlaylist, setSelectedPlaylist, selectedLibrary, setSelectedLibrary, setPresentation }: { source: Source; setSource: (source: Source) => void; selectedPlaylist: string | null; setSelectedPlaylist: (id: string) => void; selectedLibrary: string | null; setSelectedLibrary: (id: string) => void; setPresentation: (value: PresentationContext | null) => void }) {
   const playlists = usePlaylists(); const libraries = useLibraries(); const playlist = playlists.data?.find((entry) => entry.id === selectedPlaylist); const library = libraries.data?.find((entry) => entry.id === selectedLibrary); const playlistItems = usePlaylistItems(selectedPlaylist, source === 'playlist'); const libraryItems = useLibraryItems(selectedLibrary, source === 'library'); const { state } = useProPresenterSession();
@@ -41,16 +81,33 @@ function Sidebar({ source, setSource, selectedPlaylist, setSelectedPlaylist, sel
 function TopNav({ settings, title, following, follow, connection, appSettings }: { settings: Settings; title: string; following: boolean; follow: () => void; connection: () => void; appSettings: () => void }) { const { state, connection: stateConnection } = useProPresenterSession(); const label = stateConnection.status === 'connected' && state ? '연결됨' : stateConnection.status === 'error' ? '연결 오류' : '확인 중'; return <nav className="top-nav"><strong>ProPresenter Remote</strong><span className="top-playlist">{title}</span><div className="top-actions"><button className={`top-live-badge connection-${stateConnection.status}`} onClick={connection}><span className={`status-dot ${stateConnection.status}`} aria-hidden="true" />{settings.host}:{settings.port} · {label}</button><button className="top-follow-button" disabled={following} onClick={follow}>{following ? '현재 슬라이드 추적 중' : '현재 슬라이드 따라가기'}</button><button onClick={() => window.location.assign('/remote')}>리모컨</button><button onClick={appSettings}>앱 설정</button></div></nav>; }
 function Controller({ settings, onConnection }: { settings: Settings; onConnection: () => void }) {
   const { state, connection, commands } = useProPresenterSession(); const allPlaylists = usePlaylists(); const [source, setSource] = useState<Source>('playlist'); const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null); const [selectedLibrary, setSelectedLibrary] = useState<string | null>(null); const [presentation, setPresentation] = useState<PresentationContext | null>(null); const [following, setFollowing] = useState(true); const [mode, setMode] = useState<'preview' | 'text'>(() => localStorage.getItem('propresenter-remote:slide-mode') === 'text' ? 'text' : 'preview'); const [quality, setQuality] = useState(() => localStorage.getItem('propresenter-remote:thumbnail-quality') ?? '256'); const [showSettings, setShowSettings] = useState(false); const [rendered, setRendered] = useState(0); const workspace = useRef<HTMLElement>(null);
-  useEffect(() => { if (!selectedPlaylist && allPlaylists.data?.length) setSelectedPlaylist(state?.playlistId && allPlaylists.data.some((item) => item.id === state.playlistId) ? state.playlistId : allPlaylists.data[0].id); }, [allPlaylists.data, selectedPlaylist, state?.playlistId]);
+  useEffect(() => {
+    if (!following || !allPlaylists.data?.length) return;
+    const activePlaylistId = state?.playlistId && allPlaylists.data.some((item) => item.id === state.playlistId) ? state.playlistId : null;
+    const nextPlaylistId = activePlaylistId ?? selectedPlaylist ?? allPlaylists.data[0].id;
+    if (nextPlaylistId !== selectedPlaylist) setSelectedPlaylist(nextPlaylistId);
+  }, [allPlaylists.data, following, selectedPlaylist, state?.playlistId]);
   useEffect(() => { if (following && state?.playlistId) { setSource('playlist'); setSelectedPlaylist(state.playlistId); setPresentation(null); } }, [following, state?.playlistId]);
   const activePlaylistContext = state ? activePlaylistPresentationContext(state) : null;
   const activeContext = state?.presentationId && state.outputLayers?.slide !== false && state.playlistId === null && state.playlistItemId === null ? activePresentationContext(state.presentationId, state.presentationName) : null;
   const liveContext = state?.playlistItem ?? activePlaylistContext ?? (presentation && isCurrentContext(state, presentation) ? presentation : null) ?? activeContext;
-  const handleWorkspaceKeyDown = (event: React.KeyboardEvent<HTMLElement>) => { if (event.repeat || (event.target as HTMLElement)?.closest('input,textarea,select,[role=dialog]')) return; const next = ['ArrowRight', 'ArrowDown', ' '].includes(event.key); const previous = ['ArrowLeft', 'ArrowUp'].includes(event.key); if (!next && !previous) return; event.preventDefault(); void (next ? commands.next() : commands.previous()).catch(() => undefined); };
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const next = ['ArrowRight', 'ArrowDown', ' '].includes(event.key) || event.code === 'Space';
+      const previous = ['ArrowLeft', 'ArrowUp'].includes(event.key);
+      if (!next && !previous) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (event.repeat || event.defaultPrevented || showSettings || document.querySelector('dialog,[role="dialog"]') || target?.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),dialog,[role="dialog"]')) return;
+      event.preventDefault();
+      void (next ? commands.next() : commands.previous()).catch(() => undefined);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [commands, showSettings]);
   useEffect(() => { const context = liveContext; const index = state?.slideIndex; if (!following || !workspace.current || !context || index === null) return; const target = workspace.current.querySelector<HTMLElement>(`.slide-card[data-context-key="${context.cacheKey}"][data-slide-index="${index}"]`); if (target && typeof workspace.current.scrollTo === 'function') { const box = workspace.current.getBoundingClientRect(); const slide = target.getBoundingClientRect(); workspace.current.scrollTo({ top: Math.max(0, workspace.current.scrollTop + slide.top - box.top - (workspace.current.clientHeight / 3 - slide.height / 2)), behavior: 'smooth' }); } }, [following, rendered, liveContext?.cacheKey, state?.slideIndex]);
   const selected = presentation ?? state?.playlistItem ?? activePlaylistContext ?? activeContext; const title = state?.playlistId ? `${state.playlistName ?? '재생목록'} / ${state.playlistItem?.name ?? state.presentationName ?? '현재 프레젠테이션'}` : state?.presentationName ?? '재생목록';
   const handleRendered = useCallback(() => setRendered((value) => value + 1), []);
-  return <><TopNav settings={settings} title={title} following={following} follow={() => { setFollowing(true); setPresentation((current) => current?.source === 'library' && isCurrentContext(state, current) ? current : null); setRendered((value) => value + 1); }} connection={onConnection} appSettings={() => setShowSettings(true)} /><main className="control-app" data-presentation-id={state?.presentationId ?? ''} data-slide-index={state?.slideIndex ?? ''} data-connection-status={connection.status}><aside className="sidebar"><Sidebar source={source} setSource={(next) => { setFollowing(false); setSource(next); }} selectedPlaylist={selectedPlaylist} setSelectedPlaylist={(id) => { setFollowing(false); setSelectedPlaylist(id); }} selectedLibrary={selectedLibrary} setSelectedLibrary={(id) => { setFollowing(false); setSelectedLibrary(id); }} setPresentation={(value) => { setFollowing(false); setPresentation(value); }} /></aside><section className="workspace" ref={workspace} tabIndex={0} onKeyDown={handleWorkspaceKeyDown} onWheel={() => setFollowing(false)} onTouchMove={() => setFollowing(false)}>{selected && <PresentationBlock context={selected} mode={mode} quality={quality} onRendered={handleRendered} />}</section></main>{showSettings && <Panel modal title="앱 설정" onClose={() => setShowSettings(false)}><label>슬라이드 표시 방식<select value={mode} onChange={(event) => { const value = event.target.value as 'preview' | 'text'; localStorage.setItem('propresenter-remote:slide-mode', value); setMode(value); }}><option value="preview">미리보기</option><option value="text">텍스트</option></select></label><label>미리보기 해상도<select value={quality} onChange={(event) => { localStorage.setItem('propresenter-remote:thumbnail-quality', event.target.value); setQuality(event.target.value); }}>{['64', '128', '256', '512'].map((value) => <option key={value}>{value}</option>)}</select></label></Panel>}{commands.error && <p className="remote-command-error">{commands.error}</p>}</>;
+  return <><TopNav settings={settings} title={title} following={following} follow={() => { setFollowing(true); setPresentation((current) => current?.source === 'library' && isCurrentContext(state, current) ? current : null); setRendered((value) => value + 1); }} connection={onConnection} appSettings={() => setShowSettings(true)} /><main className="control-app" data-presentation-id={state?.presentationId ?? ''} data-slide-index={state?.slideIndex ?? ''} data-connection-status={connection.status}><aside className="sidebar"><Sidebar source={source} setSource={(next) => { setFollowing(false); setSource(next); }} selectedPlaylist={selectedPlaylist} setSelectedPlaylist={(id) => { setFollowing(false); setSelectedPlaylist(id); }} selectedLibrary={selectedLibrary} setSelectedLibrary={(id) => { setFollowing(false); setSelectedLibrary(id); }} setPresentation={(value) => { setFollowing(false); setPresentation(value); }} /></aside><section className="workspace" ref={workspace} tabIndex={0} onWheel={() => setFollowing(false)} onTouchMove={() => setFollowing(false)}>{selected && <PresentationBlock context={selected} mode={mode} quality={quality} onRendered={handleRendered} />}</section></main>{showSettings && <Panel modal title="앱 설정" onClose={() => setShowSettings(false)}><label>슬라이드 표시 방식<select value={mode} onChange={(event) => { const value = event.target.value as 'preview' | 'text'; localStorage.setItem('propresenter-remote:slide-mode', value); setMode(value); }}><option value="preview">미리보기</option><option value="text">텍스트</option></select></label><label>미리보기 해상도<select value={quality} onChange={(event) => { localStorage.setItem('propresenter-remote:thumbnail-quality', event.target.value); setQuality(event.target.value); }}>{['64', '128', '256', '512'].map((value) => <option key={value}>{value}</option>)}</select></label></Panel>}{commands.error && <p className="remote-command-error">{commands.error}</p>}</>;
 }
 function RemoteSlide({ label, text, preview }: { label: string; text: string; preview: string | null }) { return <section className={`remote-slide ${preview ? 'remote-preview' : 'remote-text'}`}><span className="remote-slide-label">{label}</span>{preview ? <img src={preview} alt={`${label} 슬라이드 미리보기`} /> : <p>{text || '표시할 슬라이드가 없습니다.'}</p>}</section>; }
 function Remote() {

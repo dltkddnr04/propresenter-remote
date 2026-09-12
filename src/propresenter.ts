@@ -120,9 +120,6 @@ export function isCurrentContext(state: CanonicalState | null | undefined, conte
 }
 export function currentCueIndex(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): ArrangementCueIndex | null { return isCurrentContext(state, context) ? state!.slideIndex : null; }
 export function canTriggerPresentationCue(state: CanonicalState | null | undefined, context: PresentationContext): boolean { return context.source !== 'playlist' || isCurrentContext(state, context); }
-export function canReadArrangementCues(state: CanonicalState | null | undefined, context: PresentationContext | null | undefined): boolean {
-  return Boolean(context?.source !== 'playlist' || !context.arrangementName || isCurrentContext(state, context));
-}
 export function activeGroupKey(slides: Slide[], cueIndex: ArrangementCueIndex | null): string | null {
   return cueIndex === null ? null : slides.find((slide) => slide.cueIndex === cueIndex)?.groupKey ?? null;
 }

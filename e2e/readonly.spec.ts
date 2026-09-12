@@ -38,6 +38,20 @@ test('production controller and remote converge on the real ProPresenter state',
       expect(await page.locator(`.slide-card.active[data-context-key*="${coherent.api.playlistId}:${coherent.api.playlistItemId}"]`).count()).toBeGreaterThan(0);
     }
 
+    // Browsing an inactive playlist presentation is read-only: it must load
+    // content without claiming that item is live or sending a trigger.
+    const inactiveItem = page.locator('.sidebar-item-button:not(.active)').first();
+    if (await inactiveItem.count()) {
+      const inactiveName = (await inactiveItem.innerText()).trim();
+      await inactiveItem.click();
+      await expect(page.locator('.presentation-heading strong')).toHaveText(inactiveName, { timeout: 10_000 });
+      await expect(page.locator('.presentation-heading small')).not.toContainText('활성화 필요');
+      await expect(page.locator('body')).not.toContainText('이 항목 활성화');
+      expect(await page.locator('.slide-card.active').count()).toBe(0);
+      await page.locator('.top-follow-button').click();
+      await expect(page.locator('.top-follow-button')).toBeDisabled();
+    }
+
     const remote = await context.newPage();
     const remoteRequests: Array<{ url: string; at: number }> = [];
     const remoteResponses: Array<{ url: string; status: number; at: number }> = [];
