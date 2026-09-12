@@ -107,6 +107,7 @@ describe('application bootstrap integration', () => {
       if (pathname === '/v1/presentation/slide_index') return new Response(JSON.stringify({ presentation_index: { index: 0, presentation_id: { uuid: 'presentation-live', name: 'Live Presentation', index: 0 } } }), { status: 200 });
       if (pathname === '/v1/playlist/active') return new Response(JSON.stringify({ presentation: { playlist, item: playlistItem }, announcements: { playlist: null, item: null } }), { status: 200 });
       if (pathname === '/v1/playlists') return new Response(JSON.stringify([{ id: playlist, type: 'playlist' }]), { status: 200 });
+      if (pathname === '/v1/libraries') return new Response(JSON.stringify([{ uuid: 'library-a', name: 'Library A', index: 0 }]), { status: 200 });
       if (pathname === '/v1/playlist/playlist-live') return new Response(JSON.stringify({ id: playlist, items: [{ id: playlistItem, type: 'presentation', presentation_info: { presentation_uuid: 'presentation-live' }, is_hidden: false, is_pco: false }] }), { status: 200 });
       if (pathname === '/v1/presentation/active') return new Response(JSON.stringify(presentation), { status: 200 });
       return responseFor(pathname);
@@ -114,6 +115,7 @@ describe('application bootstrap integration', () => {
     await mountApp(async () => ({ state: 'granted' } as PermissionStatus), responder);
     await vi.waitFor(() => expect(container?.querySelector('.sidebar-collection-item.active')?.textContent).toBe('Live Playlist'));
     await vi.waitFor(() => expect(container?.querySelector('[data-context-key*="item-live"] .presentation-heading strong')?.textContent).toBe('Live Presentation'));
+    expect(container?.querySelector<HTMLButtonElement>('.top-follow-button')?.disabled).toBe(true);
   });
 
   it('does not block the configured session when permission query rejects', async () => {

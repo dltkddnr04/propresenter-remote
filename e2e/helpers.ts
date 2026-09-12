@@ -95,7 +95,11 @@ export async function installConnectionSettings(page: Page): Promise<void> {
 export async function readUiSnapshot(page: Page): Promise<UiSnapshot> {
   return page.evaluate(() => {
     const control = document.querySelector<HTMLElement>('.control-app');
-    const controlCard = document.querySelector<HTMLElement>('.control-app .slide-card.active');
+    const presentationId = control?.dataset.presentationId ?? '';
+    const currentBlock = presentationId
+      ? control?.querySelector<HTMLElement>(`.presentation-block[data-presentation-id="${presentationId}"]`)
+      : null;
+    const controlCard = currentBlock?.querySelector<HTMLElement>('.slide-card.active') ?? null;
     const remote = document.querySelector<HTMLElement>('.remote-app');
     const remoteText = document.querySelector<HTMLElement>('.remote-app .remote-slide:first-of-type p');
     const controllerConnection = document.querySelector<HTMLElement>('.top-live-badge');
@@ -107,7 +111,7 @@ export async function readUiSnapshot(page: Page): Promise<UiSnapshot> {
         presentationId: control?.dataset.presentationId ?? null,
         slideIndex: number(control?.dataset.slideIndex),
         activeCardIndex: number(controlCard?.dataset.slideIndex),
-        title: control?.querySelector<HTMLElement>('.presentation-heading strong')?.textContent?.trim() ?? null,
+        title: currentBlock?.querySelector<HTMLElement>('.presentation-heading strong')?.textContent?.trim() ?? null,
         connectionStatus: control?.dataset.connectionStatus ?? null,
         connectionText: controllerConnection?.textContent?.trim() ?? null,
       },
