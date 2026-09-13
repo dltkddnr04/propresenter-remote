@@ -48,9 +48,22 @@ export type Playlist = { id: string; name: string; depth: number };
 export type Library = { id: string; name: string };
 export type PlaylistItem = { id: string | null; index: PlaylistItemIndex; name: string; type: PlaylistItemKind; presentationId: string | null; arrangementName: string | null };
 export type LibraryPresentation = { id: string; name: string };
-export type Slide = { cueIndex: PresentationCueIndex | ArrangementCueIndex; text: string; notes: string; label: string; groupName: string; groupKey: string; groupColor: string | null; groupIndex: PresentationGroupIndex };
+export type Slide = {
+  cueIndex: PresentationCueIndex | ArrangementCueIndex;
+  text: string; notes: string; label: string;
+  groupName: string; groupKey: string; groupColor: string | null; groupIndex: PresentationGroupIndex;
+  /** Optional identity supplied by some ProPresenter runtimes. */
+  cueUuid: string | null;
+  /** Occurrence of this group name in the presentation, independent of its numeric position. */
+  groupOccurrence: number;
+  /** Zero-based position within the group. */
+  slideOffset: number;
+  /** Content fingerprints of immediate siblings, used only as reconciliation hints. */
+  previousCueKey: string | null;
+  nextCueKey: string | null;
+};
 /** Identity carried from a rendered cue into the shared command layer. */
-export type PresentationCueTarget = Pick<Slide, 'cueIndex' | 'text' | 'notes' | 'label' | 'groupName' | 'groupKey'>;
+export type PresentationCueTarget = Pick<Slide, 'cueIndex' | 'text' | 'notes' | 'label' | 'groupName' | 'groupKey' | 'cueUuid' | 'groupOccurrence' | 'slideOffset' | 'previousCueKey' | 'nextCueKey'>;
 
 export function acceptCanonicalSnapshot(previous: CanonicalState | null, candidate: CanonicalState): CanonicalState {
   return previous && candidate.revision < previous.revision ? previous : candidate;
@@ -133,12 +146,41 @@ export function activeGroupKey(slides: Slide[], cueIndex: ArrangementCueIndex | 
   return cueIndex === null ? null : slides.find((slide) => slide.cueIndex === cueIndex)?.groupKey ?? null;
 }
 
+/** Content-only cue key. It is a fallback signal, never an assumed UUID. */
+export function cueContentKey(target: Pick<Slide, 'text' | 'notes' | 'label'>): string {
+  return [target.text, target.notes, target.label].map((value) => value.replace(/\s+/g, ' ').trim()).join('\u001f');
+}
+
+/** Reads the active presentation identity when that runtime includes it. */
+export function presentationIdOf(response: PresentationResponse | ActivePresentationResponse): string | null {
+  const candidate: unknown = response && typeof response === 'object' && 'presentation' in response ? response.presentation : response;
+  if (!candidate || typeof candidate !== 'object' || !('id' in candidate) || !candidate.id || typeof candidate.id !== 'object') return null;
+  return 'uuid' in candidate.id && typeof candidate.id.uuid === 'string' && candidate.id.uuid ? candidate.id.uuid : null;
+}
+
 export function flattenSlides(response: PresentationResponse | ActivePresentationResponse, scope: 'presentation' | 'active-arrangement'): Slide[] {
   const candidate: unknown = response && typeof response === 'object' && 'presentation' in response ? response.presentation : response;
   if (!candidate || typeof candidate !== 'object' || !('groups' in candidate) || !Array.isArray(candidate.groups)) return [];
-  const presentation = candidate as { groups: ReadonlyArray<{ name: string; color: unknown; slides: ReadonlyArray<{ text: string; notes: string; label: string }> }> };
+  const presentation = candidate as { groups: ReadonlyArray<{ name: string; color: unknown; slides: ReadonlyArray<{ text: string; notes: string; label: string; uuid?: unknown; id?: unknown }> }> };
+  const uuidOf = (slide: { uuid?: unknown; id?: unknown }): string | null => {
+    if (typeof slide.uuid === 'string' && slide.uuid) return slide.uuid;
+    if (slide.id && typeof slide.id === 'object' && 'uuid' in slide.id && typeof slide.id.uuid === 'string' && slide.id.uuid) return slide.id.uuid;
+    return null;
+  };
+  const groupOccurrences = new Map<string, number>();
   let cueIndex = 0;
-  return presentation.groups.flatMap((group, groupNumber) => group.slides.map((slide) => ({ cueIndex: (scope === 'active-arrangement' ? asArrangementCueIndex : asPresentationCueIndex)(cueIndex++)!, text: slide.text, notes: slide.notes, label: slide.label, groupName: group.name, groupKey: `${groupNumber}:${group.name}`, groupColor: normalizeGroupColor(group.color), groupIndex: groupNumber as PresentationGroupIndex })));
+  return presentation.groups.flatMap((group, groupNumber) => {
+    const groupOccurrence = groupOccurrences.get(group.name) ?? 0;
+    groupOccurrences.set(group.name, groupOccurrence + 1);
+    return group.slides.map((slide, slideOffset) => ({
+      cueIndex: (scope === 'active-arrangement' ? asArrangementCueIndex : asPresentationCueIndex)(cueIndex++)!,
+      text: slide.text, notes: slide.notes, label: slide.label,
+      groupName: group.name, groupKey: `${groupNumber}:${group.name}`, groupColor: normalizeGroupColor(group.color), groupIndex: groupNumber as PresentationGroupIndex,
+      cueUuid: uuidOf(slide), groupOccurrence, slideOffset,
+      previousCueKey: slideOffset > 0 ? cueContentKey(group.slides[slideOffset - 1]) : null,
+      nextCueKey: slideOffset + 1 < group.slides.length ? cueContentKey(group.slides[slideOffset + 1]) : null,
+    }));
+  });
 }
 export function slideText(slide?: Slide): string { return slide?.text.replace(/\s+/g, ' ').trim() ?? ''; }
 export function groupStarts(slides: Slide[]): Array<{ key: string; name: string; index: PresentationGroupIndex; cueIndex: ArrangementCueIndex }> { return slides.reduce<Array<{ key: string; name: string; index: PresentationGroupIndex; cueIndex: ArrangementCueIndex }>>((all, slide) => all.some((group) => group.key === slide.groupKey) ? all : [...all, { key: slide.groupKey, name: slide.groupName || `그룹 ${all.length + 1}`, index: slide.groupIndex, cueIndex: slide.cueIndex as ArrangementCueIndex }], []); }

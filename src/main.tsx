@@ -31,7 +31,9 @@ function PresentationBlock({ context, mode, quality, onRendered, followTarget = 
   const query = usePresentationCues(context);
   const slides = query.data ?? [];
   const active = currentCueIndex(state, context);
-  const arrangementLabel = context.source === 'playlist' && context.arrangementName ? ` · ${context.arrangementName}` : '';
+  const arrangementLabel = context.source === 'playlist' && context.arrangementName
+    ? ` · ${context.arrangementName}${isCurrentContext(state, context) ? '' : ' · 기본 cue 기준'}`
+    : '';
 
   useEffect(() => {
     if (followTarget && slides.length) onRendered?.();

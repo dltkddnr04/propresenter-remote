@@ -12,6 +12,9 @@ const active = { presentation: { playlist: id('playlist-a'), item: id('item-a', 
 const emptyActive = { presentation: { playlist: null, item: null }, announcements: { playlist: null, item: null } };
 const layers = { video_input: false, media: false, slide: true, announcements: false, props: false, messages: false, audio: false };
 const response = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+const cueTarget = (index: number, text: string, label: string, groupName = 'Group', groupOccurrence = 0, slideOffset = index, previousCueKey: string | null = null, nextCueKey: string | null = null) => ({
+  cueIndex: asArrangementCueIndex(index)!, text, notes: '', label, groupName, groupKey: `${groupOccurrence}:${groupName}`, cueUuid: null, groupOccurrence, slideOffset, previousCueKey, nextCueKey,
+});
 
 function snapshotClient(positions: unknown[]) {
   return new ProPresenterClient('', async (input) => {
@@ -216,7 +219,7 @@ describe('shared command service', () => {
     await vi.waitFor(() => expect(session?.connection.status).toBe('connected'));
 
     const currentContext = { source: 'active' as const, presentationId: 'presentation-a', name: 'Presentation A', cacheKey: 'active:presentation-a' };
-    await expect(session!.commands.triggerPresentationCue(currentContext, { cueIndex: asArrangementCueIndex(0)!, text: '', notes: '', label: '', groupName: '', groupKey: '' })).resolves.toBeUndefined();
+    await expect(session!.commands.triggerPresentationCue(currentContext, cueTarget(0, '', '', ''))).resolves.toBeUndefined();
     expect(calls).toContain('/v1/presentation/active/0/trigger');
     expect(session?.commands.pending).toBe(false);
   });
@@ -269,9 +272,10 @@ describe('shared command service', () => {
         live = { playlist: id('playlist-a'), item: id('item-b', 'Item B', 2) }; livePresentation = 'presentation-b'; liveIndex = 0;
         return Promise.resolve(new Response(null, { status: 204 }));
       }
-      if (path === '/v1/playlist/active/presentation/0/trigger') { if (failCueOnce) { failCueOnce = false; return Promise.resolve(new Response(null, { status: 503 })); } liveIndex = 0; return Promise.resolve(new Response(null, { status: 204 })); }
-      if (path === '/v1/playlist/active/presentation/1/trigger') { if (failCueOnce) { failCueOnce = false; return Promise.resolve(new Response(null, { status: 503 })); } liveIndex = 1; return Promise.resolve(new Response(null, { status: 204 })); }
-      if (path === '/v1/presentation/active/1/trigger') throw new Error('generic active cue endpoint must not be used');
+      if (path === '/v1/playlist/active/presentation/0/trigger') throw new Error('playlist active cue endpoint must not be used');
+      if (path === '/v1/playlist/active/presentation/1/trigger') throw new Error('playlist active cue endpoint must not be used');
+      if (path === '/v1/presentation/active/0/trigger') { if (failCueOnce) { failCueOnce = false; return Promise.resolve(new Response(null, { status: 503 })); } liveIndex = 0; return Promise.resolve(new Response(null, { status: 204 })); }
+      if (path === '/v1/presentation/active/1/trigger') { if (failCueOnce) { failCueOnce = false; return Promise.resolve(new Response(null, { status: 503 })); } liveIndex = 1; return Promise.resolve(new Response(null, { status: 204 })); }
       if (path === '/v1/trigger/next') return Promise.resolve(new Response(null, { status: 204 }));
       if (path === '/v1/presentation/slide_index') return Promise.resolve(response({ presentation_index: { presentation_id: id(livePresentation), index: liveIndex } }));
       if (path === '/v1/playlist/active') return Promise.resolve(response({ presentation: { playlist: live.playlist, item: live.item }, announcements: { playlist: null, item: null } }));
@@ -294,26 +298,26 @@ describe('shared command service', () => {
     await vi.waitFor(() => expect(session?.connection.status).toBe('connected'));
 
     const inactiveContext = { source: 'playlist' as const, playlistId: 'playlist-a', playlistName: 'Playlist A', playlistItemId: 'item-b', playlistItemIndex: asPlaylistItemIndex(2)!, presentationId: 'presentation-b', arrangementName: 'Full', kind: 'presentation' as const, name: 'Presentation B', cacheKey: 'playlist-a:item-b:2:presentation-b:Full' };
-    await expect(session!.commands.triggerPlaylistCue(inactiveContext, { cueIndex: asArrangementCueIndex(1)!, text: 'B slide 2', notes: '', label: '2', groupName: 'Group', groupKey: '0:Group' })).resolves.toBeUndefined();
+    await expect(session!.commands.triggerPlaylistCue(inactiveContext, cueTarget(1, 'B slide 2', '2'))).resolves.toBeUndefined();
     expect(calls).toContain('/v1/playlist/playlist-a/2/trigger');
-    expect(calls).toContain('/v1/playlist/active/presentation/0/trigger');
-    expect(calls).not.toContain('/v1/presentation/active/1/trigger');
+    expect(calls).toContain('/v1/presentation/active/0/trigger');
+    expect(calls).not.toContain('/v1/playlist/active/presentation/0/trigger');
     expect(session?.commands.pending).toBe(false);
 
     await vi.waitFor(() => expect(session?.state?.playlistItemId).toBe('item-b'));
     const beforeActiveClick = calls.length;
     failCueOnce = true;
-    await expect(session!.commands.triggerPlaylistCue(inactiveContext, { cueIndex: asArrangementCueIndex(0)!, text: 'B slide 1', notes: '', label: '1', groupName: 'Group', groupKey: '0:Group' })).rejects.toMatchObject({ kind: 'http', path: '/v1/playlist/active/presentation/1/trigger' });
+    await expect(session!.commands.triggerPlaylistCue(inactiveContext, cueTarget(0, 'B slide 1', '1'))).rejects.toMatchObject({ kind: 'http', path: '/v1/presentation/active/1/trigger' });
     await vi.waitFor(() => expect(session?.commands.pending).toBe(false));
-    await expect(session!.commands.triggerPlaylistCue(inactiveContext, { cueIndex: asArrangementCueIndex(0)!, text: 'B slide 1', notes: '', label: '1', groupName: 'Group', groupKey: '0:Group' })).resolves.toBeUndefined();
+    await expect(session!.commands.triggerPlaylistCue(inactiveContext, cueTarget(0, 'B slide 1', '1'))).resolves.toBeUndefined();
     expect(calls.slice(beforeActiveClick)).not.toContain('/v1/playlist/playlist-a/2/trigger');
-    expect(calls).toContain('/v1/playlist/active/presentation/1/trigger');
+    expect(calls).toContain('/v1/presentation/active/1/trigger');
     expect(session?.commands.pending).toBe(false);
 
-    const rapidFirst = session!.commands.triggerPlaylistCue(inactiveContext, { cueIndex: asArrangementCueIndex(1)!, text: 'B slide 2', notes: '', label: '2', groupName: 'Group', groupKey: '0:Group' });
-    const rapidSecond = session!.commands.triggerPlaylistCue(inactiveContext, { cueIndex: asArrangementCueIndex(0)!, text: 'B slide 1', notes: '', label: '1', groupName: 'Group', groupKey: '0:Group' });
+    const rapidFirst = session!.commands.triggerPlaylistCue(inactiveContext, cueTarget(1, 'B slide 2', '2'));
+    const rapidSecond = session!.commands.triggerPlaylistCue(inactiveContext, cueTarget(0, 'B slide 1', '1'));
     await Promise.all([rapidFirst, rapidSecond]);
-    expect(calls.filter((path) => path.startsWith('/v1/playlist/active/presentation/') && path.endsWith('/trigger')).slice(-2)).toEqual(['/v1/playlist/active/presentation/0/trigger', '/v1/playlist/active/presentation/1/trigger']);
+    expect(calls.filter((path) => path.startsWith('/v1/presentation/active/') && path.endsWith('/trigger')).slice(-2)).toEqual(['/v1/presentation/active/0/trigger', '/v1/presentation/active/1/trigger']);
 
     await expect(session!.commands.next()).resolves.toBeUndefined();
     expect(calls).toContain('/v1/trigger/next');
@@ -342,7 +346,7 @@ describe('shared command service', () => {
     await vi.waitFor(() => expect(session?.connection.status).toBe('connected'));
 
     const context = { source: 'playlist' as const, playlistId: 'playlist-a', playlistName: 'Playlist A', playlistItemId: 'item-b', playlistItemIndex: asPlaylistItemIndex(2)!, presentationId: 'presentation-b', arrangementName: 'Full', kind: 'presentation' as const, name: 'Presentation B', cacheKey: 'playlist-a:item-b:2:presentation-b:Full' };
-    const target = { cueIndex: asArrangementCueIndex(0)!, text: 'B slide', notes: '', label: '1', groupName: 'Group', groupKey: '0:Group' };
+    const target = cueTarget(0, 'B slide', '1');
     await expect(session!.commands.triggerPlaylistCue(context, target)).rejects.toMatchObject({ kind: 'http', path: '/v1/playlist/playlist-a/2/trigger' });
     await vi.waitFor(() => expect(session?.commands.pending).toBe(false));
     await vi.waitFor(() => expect(session?.commands.error).toContain('503'));
@@ -374,11 +378,43 @@ describe('shared command service', () => {
     await vi.waitFor(() => expect(session?.connection.status).toBe('connected'));
 
     const context = { source: 'playlist' as const, playlistId: 'playlist-a', playlistName: 'Playlist A', playlistItemId: 'item-b', playlistItemIndex: asPlaylistItemIndex(2)!, presentationId: 'presentation-b', arrangementName: 'Full', kind: 'presentation' as const, name: 'Presentation B', cacheKey: 'playlist-a:item-b:2:presentation-b:Full' };
-    const target = { cueIndex: asArrangementCueIndex(0)!, text: 'B slide', notes: '', label: '1', groupName: 'Group', groupKey: '0:Group' };
+    const target = cueTarget(0, 'B slide', '1');
     await expect(session!.commands.triggerPlaylistCue(context, target)).rejects.toMatchObject({ kind: 'command' });
     await vi.waitFor(() => expect(session?.commands.pending).toBe(false));
     expect(calls).not.toContain('/v1/playlist/active/presentation/0/trigger');
     await expect(session!.commands.next()).resolves.toBeUndefined();
     expect(session?.commands.pending).toBe(false);
   }, 10_000);
+
+  it('releases pending on an ambiguous inactive cue and accepts the next command', async () => {
+    let nextCalls = 0;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/presentation/active') return Promise.resolve(response({ presentation: { id: id('presentation-b'), groups: [
+        { name: 'Other Group A', color: null, slides: [{ text: 'Same', notes: '', label: '' }] },
+        { name: 'Other Group B', color: null, slides: [{ text: 'Same', notes: '', label: '' }] },
+      ] } }));
+      if (path === '/v1/trigger/next') { nextCalls += 1; return Promise.resolve(new Response(null, { status: 204 })); }
+      if (path === '/v1/presentation/slide_index') return Promise.resolve(response({ presentation_index: { presentation_id: id('presentation-b'), index: 0 } }));
+      if (path === '/v1/playlist/active') return Promise.resolve(response({ presentation: { playlist: id('playlist-a'), item: id('item-b', 'Item B', 2) }, announcements: { playlist: null, item: null } }));
+      if (path === '/v1/status/slide') return Promise.resolve(response({ current: null, next: null }));
+      if (path === '/v1/status/layers') return Promise.resolve(response(layers));
+      throw new Error(`unexpected ${path}`);
+    }));
+    let session: ProPresenterSession | null = null;
+    function Probe() { session = useProPresenterSession(); return <span>{session.connection.status}</span>; }
+    container = document.createElement('div'); document.body.append(container);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } });
+    root = createRoot(container);
+    await act(async () => root?.render(<QueryClientProvider client={queryClient}><ProPresenterSessionProvider settings={{ host: '172.30.1.51', port: 1025 }}><Probe /></ProPresenterSessionProvider></QueryClientProvider>));
+    await vi.waitFor(() => expect(session?.connection.status).toBe('connected'));
+
+    const context = { source: 'playlist' as const, playlistId: 'playlist-a', playlistName: 'Playlist A', playlistItemId: 'item-b', playlistItemIndex: asPlaylistItemIndex(2)!, presentationId: 'presentation-b', arrangementName: 'Full', kind: 'presentation' as const, name: 'Presentation B', cacheKey: 'playlist-a:item-b:2:presentation-b:Full' };
+    const target = cueTarget(0, 'Same', '', 'Source Group');
+    await expect(session!.commands.triggerPlaylistCue(context, target)).rejects.toMatchObject({ kind: 'command' });
+    await vi.waitFor(() => expect(session?.commands.pending).toBe(false));
+    await expect(session!.commands.next()).resolves.toBeUndefined();
+    expect(nextCalls).toBe(1);
+    expect(session?.commands.pending).toBe(false);
+  });
 });

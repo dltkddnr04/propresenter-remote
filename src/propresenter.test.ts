@@ -10,6 +10,7 @@ import presentationSlideIndexFixture from '../tests/fixtures/propresenter-runtim
 import statusSlideFixture from '../tests/fixtures/propresenter-runtime/status-slide.json';
 import { ProPresenterApiError, ProPresenterClient } from './propresenter-client';
 import { acceptCanonicalSnapshot, activeGroupKey, activePlaylistPresentationContext, asPlaylistItemIndex, enrichPlaylistContext, flattenSlides, isActivePlaylistContext, isCurrentContext, libraryPresentationContext, normalizeCanonicalState, normalizeLibraries, normalizeLibraryItems, normalizePlaylistItems, normalizePlaylistTree, playlistItemContext, remoteDisplayMode } from './propresenter';
+import { resolveActiveCueIndex } from './propresenter-session';
 
 const id = (uuid: string, name = uuid, index = 0) => ({ uuid, name, index });
 const position = { presentation_index: { presentation_id: id('presentation-a', 'Presentation A'), index: 2 } } as const;
@@ -37,6 +38,42 @@ describe('official OpenAPI adapter', () => {
   it('does not invent a presentation context for a non-presentation playlist item', () => { const mediaState = normalizeCanonicalState({ revision: 1, position: { presentation_index: null }, activePlaylist: { presentation: { playlist: id('playlist-a'), item: id('media-a', 'Media', 1) }, announcements: { playlist: null, item: null } }, status }); expect(activePlaylistPresentationContext(mediaState)).toBeNull(); });
   it('drops playlist detail context when its presentation does not match the position pair', () => { const mismatched = enrichPlaylistContext(normalizeCanonicalState({ revision: 1, position: { presentation_index: { presentation_id: id('presentation-b'), index: 0 } }, activePlaylist: active, status }), { id: id('playlist-a'), items: [item('item-a', 'Full')] } as never); expect(mismatched.playlistItem).toBeNull(); expect(mismatched.arrangementName).toBeNull(); });
   it('identifies duplicate group names by the current cue rather than the name', () => { const slide = (text: string) => ({ enabled: true, text, notes: '', label: '', color: {} }); const slides = flattenSlides({ groups: [{ name: 'Chorus', color: {}, slides: [slide('A')] }, { name: 'Chorus', color: {}, slides: [slide('B')] }], has_timeline: false, destination: 'presentation' as const }, 'active-arrangement'); expect(activeGroupKey(slides, 1 as never)).toBe('1:Chorus'); });
+  it('retains cue structure needed to resolve arrangement reordering safely', () => {
+    const slide = (text: string, uuid?: string) => ({ enabled: true, text, notes: '', label: text, color: {}, ...(uuid ? { uuid } : {}) });
+    const slides = flattenSlides({ groups: [{ name: 'Chorus', color: {}, slides: [slide('A'), slide('B', 'cue-b')] }, { name: 'Chorus', color: {}, slides: [slide('C')] }], has_timeline: false, destination: 'presentation' as const }, 'presentation');
+    expect(slides[1]).toMatchObject({ cueUuid: 'cue-b', groupOccurrence: 0, slideOffset: 1, previousCueKey: expect.any(String), nextCueKey: null });
+    expect(slides[2].groupOccurrence).toBe(1);
+  });
+  it('resolves a cue by group occurrence and content when arrangement groups move', () => {
+    const make = (groups: Array<{ name: string; slides: string[] }>) => flattenSlides({ groups: groups.map((group) => ({ name: group.name, color: {}, slides: group.slides.map((text) => ({ enabled: true, text, notes: '', label: text, color: {} })) })), has_timeline: false, destination: 'presentation' as const }, 'presentation');
+    const source = make([{ name: 'Chorus', slides: ['A'] }, { name: 'Chorus', slides: ['B'] }]);
+    const activeArrangement = make([{ name: 'Chorus', slides: ['B'] }, { name: 'Chorus', slides: ['A'] }]).map((slide) => ({ ...slide, cueIndex: slide.cueIndex as never }));
+    const context = { arrangementName: 'Full' } as never;
+    expect(resolveActiveCueIndex(context, source[1], activeArrangement)).toEqual({ status: 'matched', cueIndex: activeArrangement[0].cueIndex });
+  });
+  it('keeps equal text in different groups tied to the selected group', () => {
+    const make = (groups: Array<{ name: string; text: string }>) => flattenSlides({ groups: groups.map((group) => ({ name: group.name, color: {}, slides: [{ enabled: true, text: group.text, notes: '', label: '', color: {} }] })), has_timeline: false, destination: 'presentation' as const }, 'presentation');
+    const source = make([{ name: 'Verse', text: 'Same' }, { name: 'Chorus', text: 'Same' }]);
+    const activeArrangement = make([{ name: 'Chorus', text: 'Same' }, { name: 'Verse', text: 'Same' }]).map((slide) => ({ ...slide, cueIndex: slide.cueIndex as never }));
+    expect(resolveActiveCueIndex({ arrangementName: 'Full' } as never, source[1], activeArrangement)).toEqual({ status: 'matched', cueIndex: activeArrangement[0].cueIndex });
+  });
+  it('uses neighboring cue structure for repeated content and never picks the first duplicate', () => {
+    const make = (texts: string[]) => flattenSlides({ groups: [{ name: 'Group', color: {}, slides: texts.map((text) => ({ enabled: true, text, notes: '', label: text, color: {} })) }], has_timeline: false, destination: 'presentation' as const }, 'presentation');
+    const source = make(['Before', 'Repeat', 'After']);
+    const activeArrangement = make(['Before', 'Repeat', 'After']).map((slide) => ({ ...slide, cueIndex: (Number(slide.cueIndex) + 10) as never }));
+    expect(resolveActiveCueIndex({ arrangementName: 'Full' } as never, source[1], activeArrangement)).toEqual({ status: 'matched', cueIndex: activeArrangement[1].cueIndex });
+  });
+  it('prefers an optional runtime cue UUID over coincidentally equal content', () => {
+    const make = (uuid: string, text: string) => flattenSlides({ groups: [{ name: 'Group', color: {}, slides: [{ enabled: true, uuid, text, notes: '', label: '', color: {} }] }], has_timeline: false, destination: 'presentation' as const } as never, 'presentation');
+    const source = make('target-uuid', 'Same');
+    const activeArrangement = [...make('other-uuid', 'Same'), ...make('target-uuid', 'Same')].map((slide, index) => ({ ...slide, cueIndex: index as never }));
+    expect(resolveActiveCueIndex({ arrangementName: 'Full' } as never, source[0], activeArrangement)).toEqual({ status: 'matched', cueIndex: activeArrangement[1].cueIndex });
+  });
+  it('reports genuinely ambiguous duplicate content instead of selecting the first cue', () => {
+    const source = flattenSlides({ groups: [{ name: 'Source Group', color: {}, slides: [{ enabled: true, text: 'Same', notes: '', label: '', color: {} }] }], has_timeline: false, destination: 'presentation' as const }, 'presentation');
+    const activeArrangement = flattenSlides({ groups: [{ name: 'Other Group A', color: {}, slides: [{ enabled: true, text: 'Same', notes: '', label: '', color: {} }] }, { name: 'Other Group B', color: {}, slides: [{ enabled: true, text: 'Same', notes: '', label: '', color: {} }] }], has_timeline: false, destination: 'presentation' as const }, 'active-arrangement');
+    expect(resolveActiveCueIndex({ arrangementName: 'Full' } as never, source[0], activeArrangement)).toEqual({ status: 'ambiguous' });
+  });
   it('retains explicit layer state so a cleared slide layer is not rendered as an audience slide', () => { const state = normalizeCanonicalState({ revision: 1, position, activePlaylist: active, status, layers: { video_input: true, media: true, slide: false, announcements: false, props: false, messages: false, audio: false } }); expect(state.outputLayers).toMatchObject({ slide: false, media: true, videoInput: true }); });
   it('decodes the observed runtime status/layers payload', async () => { const runtimeLayers = { video_input: true, media: true, slide: true, announcements: false, props: true, messages: false, audio: false }; await expect(jsonClient(runtimeLayers).layerStatus()).resolves.toEqual(runtimeLayers); });
 });

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiBase, ProPresenterApiError, ProPresenterClient } from './propresenter-client';
 import {
   CanonicalState, ConnectionSettings, LibraryPresentationContext, PlaylistItemContext, PresentationCueTarget, PresentationGroupIndex, ActivePresentationContext, PresentationContext, Slide,
-  acceptCanonicalSnapshot, asArrangementCueIndex, currentCueIndex, enrichPlaylistContext, flattenSlides, isActivePlaylistContext, isCurrentContext, normalizeCanonicalState,
+  acceptCanonicalSnapshot, asArrangementCueIndex, cueContentKey, currentCueIndex, enrichPlaylistContext, flattenSlides, isActivePlaylistContext, isCurrentContext, normalizeCanonicalState, presentationIdOf,
   normalizeLibraries, normalizeLibraryItems, normalizePlaylistItems, normalizePlaylistTree,
 } from './propresenter';
 
@@ -23,6 +23,7 @@ const sessionKey = (base: string) => ['propresenter-session', base] as const;
 const HEALTH_GRACE_MS = 5_000;
 const PLAYLIST_TRANSITION_TIMEOUT_MS = 5_000;
 const ACTIVE_ARRANGEMENT_TIMEOUT_MS = 5_000;
+const ACTIVE_ARRANGEMENT_UNKNOWN_ID_GRACE_MS = 800;
 
 export function connectionHealth(root: { isError: boolean; error: unknown }, state: CanonicalState | null, lastSuccessfulPollAt: number | null, now = Date.now(), diagnostic: unknown = null): Connection {
   if (!state && lastSuccessfulPollAt === null) {
@@ -51,27 +52,85 @@ function canonicalPlaylistContextMatches(state: CanonicalState | null | undefine
     && state.presentationId === context.presentationId);
 }
 
-function cueFingerprint(target: Pick<PresentationCueTarget, 'text' | 'notes' | 'label' | 'groupName'>): string {
-  return [target.text, target.notes, target.label, target.groupName]
-    .map((value) => value.replace(/\s+/g, ' ').trim())
-    .join('\u001f');
+type CueResolution =
+  | { status: 'matched'; cueIndex: number }
+  | { status: 'not-found' }
+  | { status: 'ambiguous' };
+
+function neighborMatches(target: PresentationCueTarget, slide: Slide): boolean {
+  let hasNeighbor = false;
+  if (target.previousCueKey !== null) {
+    hasNeighbor = true;
+    if (slide.previousCueKey !== target.previousCueKey) return false;
+  }
+  if (target.nextCueKey !== null) {
+    hasNeighbor = true;
+    if (slide.nextCueKey !== target.nextCueKey) return false;
+  }
+  return hasNeighbor;
 }
 
-function resolveActiveCueIndex(context: PlaylistItemContext, target: PresentationCueTarget, slides: Slide[]): number | null {
-  const matches = slides.filter((slide) => cueFingerprint(slide) === cueFingerprint(target));
-  if (matches.length === 1) return matches[0].cueIndex;
-  if (matches.length > 1) {
-    throw commandFailure('활성 arrangement에서 선택한 cue를 하나로 식별할 수 없습니다.', '/v1/playlist/active/presentation/trigger');
+/**
+ * Re-identifies a cue in the selected active arrangement without assuming
+ * that the generic presentation order and arrangement order are identical.
+ * A numeric source index is only a final, content-validated fallback for an
+ * item with no explicit arrangement. Duplicate content remains ambiguous
+ * unless its structure or optional runtime UUID disambiguates it.
+ */
+export function resolveActiveCueIndex(context: PlaylistItemContext, target: PresentationCueTarget, slides: Slide[]): CueResolution {
+  if (target.cueUuid) {
+    const uuidMatches = slides.filter((slide) => slide.cueUuid === target.cueUuid);
+    if (uuidMatches.length === 1) return { status: 'matched', cueIndex: uuidMatches[0].cueIndex };
+    if (uuidMatches.length > 1) return { status: 'ambiguous' };
+    // If the active response carries cue UUIDs, a different UUID is stronger
+    // evidence than a coincidentally equal text/label.
+    if (slides.some((slide) => slide.cueUuid !== null)) return { status: 'not-found' };
   }
 
-  // A playlist item without an explicit arrangement uses the presentation's
-  // ordinary cue order. Even then, validate the target at that position before
-  // using its number; never send a numeric index when the content disagrees.
+  const targetContent = cueContentKey(target);
+  const sameGroup = slides.filter((slide) => slide.groupName === target.groupName && slide.groupOccurrence === target.groupOccurrence);
+  const structuralContent = sameGroup.filter((slide) => cueContentKey(slide) === targetContent);
+  if (structuralContent.length === 1) return { status: 'matched', cueIndex: structuralContent[0].cueIndex };
+  if (structuralContent.length > 1) {
+    const byNeighbors = structuralContent.filter((slide) => neighborMatches(target, slide));
+    if (byNeighbors.length === 1) return { status: 'matched', cueIndex: byNeighbors[0].cueIndex };
+    const byOffset = structuralContent.filter((slide) => slide.slideOffset === target.slideOffset);
+    if (byOffset.length === 1) return { status: 'matched', cueIndex: byOffset[0].cueIndex };
+    return { status: 'ambiguous' };
+  }
+
+  // A repeated group name's occurrence can change when same-named groups are
+  // reordered by an arrangement. If the cue content is unique among that
+  // group name, it remains a safe group-scoped match without trusting the
+  // numeric group index or the old occurrence.
+  const sameGroupNameContent = slides.filter((slide) => slide.groupName === target.groupName && cueContentKey(slide) === targetContent);
+  if (sameGroupNameContent.length === 1) return { status: 'matched', cueIndex: sameGroupNameContent[0].cueIndex };
+  if (sameGroupNameContent.length > 1) {
+    const byNeighbors = sameGroupNameContent.filter((slide) => neighborMatches(target, slide));
+    if (byNeighbors.length === 1) return { status: 'matched', cueIndex: byNeighbors[0].cueIndex };
+    const byOffset = sameGroupNameContent.filter((slide) => slide.slideOffset === target.slideOffset);
+    if (byOffset.length === 1) return { status: 'matched', cueIndex: byOffset[0].cueIndex };
+    return { status: 'ambiguous' };
+  }
+
+  // If the group moved or was renamed, a unique global content match remains
+  // safe. Duplicate global content is deliberately not resolved by first
+  // match, especially when a same-named group was present in the source.
+  const contentMatches = slides.filter((slide) => cueContentKey(slide) === targetContent);
+  if (contentMatches.length === 1) return { status: 'matched', cueIndex: contentMatches[0].cueIndex };
+  if (contentMatches.length > 1 && sameGroupNameContent.length === 0 && sameGroup.length === 0) {
+    const byNeighbors = contentMatches.filter((slide) => neighborMatches(target, slide));
+    if (byNeighbors.length === 1) return { status: 'matched', cueIndex: byNeighbors[0].cueIndex };
+    return { status: 'ambiguous' };
+  }
+
+  // An item without a named arrangement uses the ordinary presentation order.
+  // Still require exact content at that position; never trust the number alone.
   if (context.arrangementName === null) {
     const positional = slides.find((slide) => Number(slide.cueIndex) === Number(target.cueIndex));
-    if (positional && cueFingerprint(positional) === cueFingerprint(target)) return positional.cueIndex;
+    if (positional && cueContentKey(positional) === targetContent) return { status: 'matched', cueIndex: positional.cueIndex };
   }
-  return null;
+  return { status: 'not-found' };
 }
 
 export async function readSnapshot(client: ProPresenterClient, revision: number, signal?: AbortSignal, onStatusDiagnostic?: (error: unknown | null) => void): Promise<CanonicalState> {
@@ -218,6 +277,7 @@ export function ProPresenterSessionProvider({ settings, children }: { settings: 
       }
       const deadline = Date.now() + ACTIVE_ARRANGEMENT_TIMEOUT_MS;
       let cueIndex: number | null = null;
+      let unknownPresentationIdSince: number | null = null;
       while (Date.now() < deadline && cueIndex === null) {
         const remaining = Math.max(1, deadline - Date.now());
         const abortController = new AbortController();
@@ -225,7 +285,22 @@ export function ProPresenterSessionProvider({ settings, children }: { settings: 
         try {
           const activePresentation = await client.activePresentation(abortController.signal);
           const activeSlides = flattenSlides(activePresentation, 'active-arrangement');
-          if (activeSlides.length) cueIndex = resolveActiveCueIndex(context, target, activeSlides);
+          const activeId = presentationIdOf(activePresentation);
+          if (activeId && activeId !== context.presentationId) {
+            // The playlist item transition has been observed, but the active
+            // presentation endpoint is still one state behind. Do not resolve
+            // a cue against the old presentation.
+            unknownPresentationIdSince = null;
+          } else {
+            if (activeId === null && unknownPresentationIdSince === null) unknownPresentationIdSince = Date.now();
+            const resolution = resolveActiveCueIndex(context, target, activeSlides);
+            if (resolution.status === 'matched') cueIndex = resolution.cueIndex;
+            else if (resolution.status === 'ambiguous') {
+              throw commandFailure('활성 arrangement에서 선택한 cue를 하나로 식별할 수 없습니다.', '/v1/presentation/active/{index}/trigger');
+            } else if (activeId === context.presentationId || (activeId === null && activeSlides.length && Date.now() - unknownPresentationIdSince! >= ACTIVE_ARRANGEMENT_UNKNOWN_ID_GRACE_MS)) {
+              throw commandFailure('선택한 cue를 현재 활성 arrangement에서 안전하게 식별할 수 없습니다.', '/v1/presentation/active/{index}/trigger');
+            }
+          }
         } catch (error) {
           if (Date.now() >= deadline) break;
           throw error;
@@ -234,8 +309,10 @@ export function ProPresenterSessionProvider({ settings, children }: { settings: 
         }
         if (cueIndex === null && Date.now() < deadline) await new Promise((resolve) => globalThis.setTimeout(resolve, Math.min(100, deadline - Date.now())));
       }
-      if (cueIndex === null) throw commandFailure('선택한 cue를 현재 활성 arrangement에서 안전하게 식별할 수 없습니다.', '/v1/playlist/active/presentation/trigger');
-      await client.triggerActivePlaylistPresentationCue(cueIndex);
+      if (cueIndex === null) throw commandFailure('선택한 cue를 현재 활성 arrangement에서 안전하게 식별할 수 없습니다.', '/v1/presentation/active/{index}/trigger');
+      // This endpoint takes an arrangement cue index. The playlist-scoped
+      // endpoint takes a playlist item index and must not be used here.
+      await client.triggerActiveArrangementCue(cueIndex);
     };
     return {
       pending, error: commandError, next: () => run(() => client.next()), previous: () => run(() => client.previous()),

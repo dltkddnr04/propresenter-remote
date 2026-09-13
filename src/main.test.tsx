@@ -208,7 +208,7 @@ describe('application bootstrap integration', () => {
       if (pathname === '/v1/playlists') return new Response(JSON.stringify([{ id: playlistId, type: 'playlist', playlists: [] }]), { status: 200 });
       if (pathname === '/v1/playlist/playlist-a') return new Response(JSON.stringify({ id: playlistId, items: [item('item-a', 'Presentation A', 0, 'presentation-a'), item('item-b', 'Presentation B', 1, 'presentation-shared', 'Full'), item('item-c', 'Presentation C', 2, 'presentation-shared', 'Chorus Only')] }), { status: 200 });
       if (pathname === '/v1/playlist/playlist-a/1/trigger') { livePresentation = 'presentation-shared'; liveItem = { uuid: 'item-b', name: 'Presentation B', index: 1 }; liveIndex = 0; return new Response(null, { status: 204 }); }
-      if (pathname === '/v1/playlist/active/presentation/0/trigger') { liveIndex = 0; return new Response(null, { status: 204 }); }
+      if (pathname === '/v1/presentation/active/0/trigger') { liveIndex = 0; return new Response(null, { status: 204 }); }
       if (pathname === '/v1/presentation/active') return new Response(JSON.stringify({ presentation: presentation(livePresentation === 'presentation-a' ? 'Presentation A' : 'Shared Presentation') }), { status: 200 });
       if (pathname === '/v1/presentation/presentation-shared') return new Response(JSON.stringify(presentation('Shared Presentation')), { status: 200 });
       return responseFor(pathname);
@@ -222,14 +222,15 @@ describe('application bootstrap integration', () => {
     expect(container?.textContent).not.toContain('활성화 필요');
     await vi.waitFor(() => expect(container?.querySelectorAll('.presentation-block')).toHaveLength(3));
     expect(container?.querySelector(`${blockB} .presentation-heading small`)?.textContent).toContain('Full');
+    expect(container?.querySelector(`${blockB} .presentation-heading small`)?.textContent).toContain('기본 cue 기준');
     expect(container?.querySelector(`${blockB} .slide-card.active`)).toBeNull();
     expect(container?.querySelector<HTMLButtonElement>(`${blockB} .slide-card`)?.disabled).toBe(false);
     expect(container?.querySelector<HTMLImageElement>(`${blockB} .slide-card img`)?.src).toContain('/v1/presentation/presentation-shared/thumbnail/0');
     expect(container?.querySelector(`${blockB} .slide-card`)?.getAttribute('data-context-key')).toContain('item-b:1:presentation-shared:Full');
     await act(async () => container?.querySelector<HTMLButtonElement>(`${blockB} .slide-card`)?.click());
     await vi.waitFor(() => expect(requests).toContain(`${apiOrigin}/v1/playlist/playlist-a/1/trigger`));
-    await vi.waitFor(() => expect(requests).toContain(`${apiOrigin}/v1/playlist/active/presentation/0/trigger`));
-    expect(requests).not.toContain(`${apiOrigin}/v1/presentation/active/0/trigger`);
+    await vi.waitFor(() => expect(requests).toContain(`${apiOrigin}/v1/presentation/active/0/trigger`));
+    expect(requests).not.toContain(`${apiOrigin}/v1/playlist/active/presentation/0/trigger`);
     expect(container?.querySelectorAll('.presentation-block')).toHaveLength(3);
 
     await act(async () => container?.querySelectorAll<HTMLButtonElement>('.sidebar-item-button')[2].click());

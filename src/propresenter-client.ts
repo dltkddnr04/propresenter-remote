@@ -558,7 +558,6 @@ export class ProPresenterClient {
   next(signal?: AbortSignal) { return this.command('/v1/trigger/next', signal); }
   previous(signal?: AbortSignal) { return this.command('/v1/trigger/previous', signal); }
   triggerActiveArrangementCue(index: number, signal?: AbortSignal) { return this.command(`/v1/presentation/active/${index}/trigger`, signal); }
-  triggerActivePlaylistPresentationCue(index: number, signal?: AbortSignal) { return this.command(`/v1/playlist/active/presentation/${index}/trigger`, signal); }
   triggerActivePresentationGroup(group: string, signal?: AbortSignal) { return this.command(`/v1/presentation/active/group/${encodeURIComponent(group)}/trigger`, signal); }
   triggerPlaylistItem(playlistId: string, itemIndex: number, signal?: AbortSignal) { return this.command(`/v1/playlist/${encodeURIComponent(playlistId)}/${itemIndex}/trigger`, signal); }
   triggerLibraryCue(libraryId: string, presentationId: string, index: number, signal?: AbortSignal) { return this.command(`/v1/library/${encodeURIComponent(libraryId)}/${encodeURIComponent(presentationId)}/${index}/trigger`, signal); }
