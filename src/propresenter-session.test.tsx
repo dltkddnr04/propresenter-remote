@@ -302,7 +302,7 @@ describe('shared command service', () => {
     expect(calls).toContain('/v1/playlist/playlist-a/2/trigger');
     expect(calls).toContain('/v1/presentation/active/0/trigger');
     expect(calls).not.toContain('/v1/playlist/active/presentation/0/trigger');
-    expect(session?.commands.pending).toBe(false);
+    await vi.waitFor(() => expect(session?.commands.pending).toBe(false));
 
     await vi.waitFor(() => expect(session?.state?.playlistItemId).toBe('item-b'));
     const beforeActiveClick = calls.length;
@@ -323,6 +323,143 @@ describe('shared command service', () => {
     expect(calls).toContain('/v1/trigger/next');
     expect(session?.commands.pending).toBe(false);
   });
+
+  it('does not trigger a UUID-less stale arrangement during an inactive playlist transition', async () => {
+    const calls: string[] = [];
+    let livePresentation = 'presentation-a';
+    let liveIndex = 0;
+    let activeArrangementReads = 0;
+    const staleSlides = [{ text: 'Target', notes: '', label: '1' }];
+    const targetSlides = [{ text: 'Other', notes: '', label: '0' }, { text: 'Target', notes: '', label: '1' }];
+    const playlist = { id: id('playlist-a', 'Playlist A'), items: [
+      { id: id('item-a', 'Item A', 1), type: 'presentation', presentation_info: { presentation_uuid: 'presentation-a' }, is_hidden: false, is_pco: false },
+      { id: id('item-b', 'Item B', 2), type: 'presentation', presentation_info: { presentation_uuid: 'presentation-b', arrangement_name: 'Full' }, is_hidden: false, is_pco: false },
+    ] };
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      calls.push(path);
+      if (path === '/v1/playlist/playlist-a/2/trigger') {
+        livePresentation = 'presentation-b';
+        liveIndex = 0;
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      if (path === '/v1/presentation/active/0/trigger') throw new Error('stale arrangement cue must not be triggered');
+      if (path === '/v1/presentation/active/1/trigger') { liveIndex = 1; return Promise.resolve(new Response(null, { status: 204 })); }
+      if (path === '/v1/presentation/slide_index') return Promise.resolve(response({ presentation_index: { presentation_id: id(livePresentation), index: liveIndex } }));
+      if (path === '/v1/playlist/active') return Promise.resolve(response({ presentation: { playlist: id('playlist-a'), item: id(livePresentation === 'presentation-b' ? 'item-b' : 'item-a', livePresentation === 'presentation-b' ? 'Item B' : 'Item A', livePresentation === 'presentation-b' ? 2 : 1) }, announcements: { playlist: null, item: null } }));
+      if (path === '/v1/status/slide') return Promise.resolve(response({ current: null, next: null }));
+      if (path === '/v1/status/layers') return Promise.resolve(response(layers));
+      if (path === '/v1/playlist/playlist-a') return Promise.resolve(response(playlist));
+      if (path === '/v1/presentation/active') {
+        activeArrangementReads += 1;
+        // Read 1 is the pre-transition baseline. Read 2 is the stale A
+        // payload after item activation. Reads 3 and 4 are stable B.
+        const stale = activeArrangementReads <= 2;
+        return Promise.resolve(response({ presentation: { groups: [{ name: 'Group', color: null, slides: stale ? staleSlides : targetSlides }] } }));
+      }
+      if (path === '/v1/presentation/presentation-b') return Promise.resolve(response({ groups: [{ name: 'Group', color: null, slides: targetSlides }] }));
+      throw new Error(`unexpected ${path}`);
+    }));
+    let session: ProPresenterSession | null = null;
+    function Probe() { session = useProPresenterSession(); return <span>{session.connection.status}</span>; }
+    container = document.createElement('div'); document.body.append(container);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } });
+    root = createRoot(container);
+    await act(async () => root?.render(<QueryClientProvider client={queryClient}><ProPresenterSessionProvider settings={{ host: '172.30.1.51', port: 1025 }}><Probe /></ProPresenterSessionProvider></QueryClientProvider>));
+    await vi.waitFor(() => expect(session?.connection.status).toBe('connected'));
+
+    const context = { source: 'playlist' as const, playlistId: 'playlist-a', playlistName: 'Playlist A', playlistItemId: 'item-b', playlistItemIndex: asPlaylistItemIndex(2)!, presentationId: 'presentation-b', arrangementName: 'Full', kind: 'presentation' as const, name: 'Presentation B', cacheKey: 'playlist-a:item-b:2:presentation-b:Full' };
+    await expect(session!.commands.triggerPlaylistCue(context, cueTarget(0, 'Target', '1'))).resolves.toBeUndefined();
+    expect(activeArrangementReads).toBe(4);
+    expect(calls).not.toContain('/v1/presentation/active/0/trigger');
+    expect(calls).toContain('/v1/presentation/active/1/trigger');
+    await vi.waitFor(() => expect(session?.commands.pending).toBe(false));
+  });
+
+  it('waits through a stale explicit presentation UUID and trusts the target UUID immediately', async () => {
+    const calls: string[] = [];
+    let livePresentation = 'presentation-a';
+    let activeArrangementReads = 0;
+    const playlist = { id: id('playlist-a', 'Playlist A'), items: [
+      { id: id('item-a', 'Item A', 1), type: 'presentation', presentation_info: { presentation_uuid: 'presentation-a' }, is_hidden: false, is_pco: false },
+      { id: id('item-b', 'Item B', 2), type: 'presentation', presentation_info: { presentation_uuid: 'presentation-b', arrangement_name: 'Full' }, is_hidden: false, is_pco: false },
+    ] };
+    const groups = [{ name: 'Group', color: null, slides: [{ text: 'Target', notes: '', label: '1' }] }];
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      calls.push(path);
+      if (path === '/v1/playlist/playlist-a/2/trigger') { livePresentation = 'presentation-b'; return Promise.resolve(new Response(null, { status: 204 })); }
+      if (path === '/v1/presentation/active/0/trigger') return Promise.resolve(new Response(null, { status: 204 }));
+      if (path === '/v1/presentation/slide_index') return Promise.resolve(response({ presentation_index: { presentation_id: id(livePresentation), index: 0 } }));
+      if (path === '/v1/playlist/active') return Promise.resolve(response({ presentation: { playlist: id('playlist-a'), item: id(livePresentation === 'presentation-b' ? 'item-b' : 'item-a', livePresentation === 'presentation-b' ? 'Item B' : 'Item A', livePresentation === 'presentation-b' ? 2 : 1) }, announcements: { playlist: null, item: null } }));
+      if (path === '/v1/status/slide') return Promise.resolve(response({ current: null, next: null }));
+      if (path === '/v1/status/layers') return Promise.resolve(response(layers));
+      if (path === '/v1/playlist/playlist-a') return Promise.resolve(response(playlist));
+      if (path === '/v1/presentation/active') {
+        activeArrangementReads += 1;
+        if (activeArrangementReads === 1) return Promise.resolve(response({ presentation: { id: id('presentation-a'), groups } }));
+        if (activeArrangementReads === 2) return Promise.resolve(response({ presentation: { id: id('presentation-a'), groups } }));
+        if (activeArrangementReads === 3) return Promise.resolve(response({ presentation: { id: id('presentation-b'), groups } }));
+        throw new Error('target UUID should stop active arrangement polling');
+      }
+      throw new Error(`unexpected ${path}`);
+    }));
+    let session: ProPresenterSession | null = null;
+    function Probe() { session = useProPresenterSession(); return <span>{session.connection.status}</span>; }
+    container = document.createElement('div'); document.body.append(container);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } });
+    root = createRoot(container);
+    await act(async () => root?.render(<QueryClientProvider client={queryClient}><ProPresenterSessionProvider settings={{ host: '172.30.1.51', port: 1025 }}><Probe /></ProPresenterSessionProvider></QueryClientProvider>));
+    await vi.waitFor(() => expect(session?.connection.status).toBe('connected'));
+
+    const context = { source: 'playlist' as const, playlistId: 'playlist-a', playlistName: 'Playlist A', playlistItemId: 'item-b', playlistItemIndex: asPlaylistItemIndex(2)!, presentationId: 'presentation-b', arrangementName: 'Full', kind: 'presentation' as const, name: 'Presentation B', cacheKey: 'playlist-a:item-b:2:presentation-b:Full' };
+    await expect(session!.commands.triggerPlaylistCue(context, cueTarget(0, 'Target', '1'))).resolves.toBeUndefined();
+    expect(activeArrangementReads).toBe(3);
+    expect(calls).toContain('/v1/presentation/active/0/trigger');
+    await vi.waitFor(() => expect(session?.commands.pending).toBe(false));
+  });
+
+  it('fails boundedly without a pre-transition baseline instead of trusting a matching UUID-less cue', async () => {
+    const calls: string[] = [];
+    let livePresentation = 'presentation-a';
+    let activeArrangementReads = 0;
+    const playlist = { id: id('playlist-a', 'Playlist A'), items: [
+      { id: id('item-a', 'Item A', 1), type: 'presentation', presentation_info: { presentation_uuid: 'presentation-a' }, is_hidden: false, is_pco: false },
+      { id: id('item-b', 'Item B', 2), type: 'presentation', presentation_info: { presentation_uuid: 'presentation-b', arrangement_name: 'Full' }, is_hidden: false, is_pco: false },
+    ] };
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      calls.push(path);
+      if (path === '/v1/playlist/playlist-a/2/trigger') { livePresentation = 'presentation-b'; return Promise.resolve(new Response(null, { status: 204 })); }
+      if (path === '/v1/presentation/active/0/trigger') throw new Error('an unverified UUID-less cue must not be triggered');
+      if (path === '/v1/trigger/next') return Promise.resolve(new Response(null, { status: 204 }));
+      if (path === '/v1/presentation/slide_index') return Promise.resolve(response({ presentation_index: { presentation_id: id(livePresentation), index: 0 } }));
+      if (path === '/v1/playlist/active') return Promise.resolve(response({ presentation: { playlist: id('playlist-a'), item: id(livePresentation === 'presentation-b' ? 'item-b' : 'item-a', livePresentation === 'presentation-b' ? 'Item B' : 'Item A', livePresentation === 'presentation-b' ? 2 : 1) }, announcements: { playlist: null, item: null } }));
+      if (path === '/v1/status/slide') return Promise.resolve(response({ current: null, next: null }));
+      if (path === '/v1/status/layers') return Promise.resolve(response(layers));
+      if (path === '/v1/playlist/playlist-a') return Promise.resolve(response(playlist));
+      if (path === '/v1/presentation/active') {
+        activeArrangementReads += 1;
+        if (activeArrangementReads === 1) return Promise.resolve(new Response(null, { status: 503 }));
+        return Promise.resolve(response({ presentation: { groups: [{ name: 'Group', color: null, slides: [{ text: 'Target', notes: '', label: '1' }] }] } }));
+      }
+      throw new Error(`unexpected ${path}`);
+    }));
+    let session: ProPresenterSession | null = null;
+    function Probe() { session = useProPresenterSession(); return <span>{session.connection.status}</span>; }
+    container = document.createElement('div'); document.body.append(container);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } });
+    root = createRoot(container);
+    await act(async () => root?.render(<QueryClientProvider client={queryClient}><ProPresenterSessionProvider settings={{ host: '172.30.1.51', port: 1025 }}><Probe /></ProPresenterSessionProvider></QueryClientProvider>));
+    await vi.waitFor(() => expect(session?.connection.status).toBe('connected'));
+
+    const context = { source: 'playlist' as const, playlistId: 'playlist-a', playlistName: 'Playlist A', playlistItemId: 'item-b', playlistItemIndex: asPlaylistItemIndex(2)!, presentationId: 'presentation-b', arrangementName: 'Full', kind: 'presentation' as const, name: 'Presentation B', cacheKey: 'playlist-a:item-b:2:presentation-b:Full' };
+    await expect(session!.commands.triggerPlaylistCue(context, cueTarget(0, 'Target', '1'))).rejects.toMatchObject({ kind: 'command' });
+    expect(calls).not.toContain('/v1/presentation/active/0/trigger');
+    await vi.waitFor(() => expect(session?.commands.pending).toBe(false));
+    await expect(session!.commands.next()).resolves.toBeUndefined();
+    expect(session?.commands.pending).toBe(false);
+  }, 10_000);
 
   it('releases pending after inactive playlist activation fails and accepts the next command', async () => {
     const calls: string[] = [];

@@ -23,7 +23,7 @@ const sessionKey = (base: string) => ['propresenter-session', base] as const;
 const HEALTH_GRACE_MS = 5_000;
 const PLAYLIST_TRANSITION_TIMEOUT_MS = 5_000;
 const ACTIVE_ARRANGEMENT_TIMEOUT_MS = 5_000;
-const ACTIVE_ARRANGEMENT_UNKNOWN_ID_GRACE_MS = 800;
+const ACTIVE_ARRANGEMENT_BASELINE_TIMEOUT_MS = 1_000;
 
 export function connectionHealth(root: { isError: boolean; error: unknown }, state: CanonicalState | null, lastSuccessfulPollAt: number | null, now = Date.now(), diagnostic: unknown = null): Connection {
   if (!state && lastSuccessfulPollAt === null) {
@@ -68,6 +68,34 @@ function neighborMatches(target: PresentationCueTarget, slide: Slide): boolean {
     if (slide.nextCueKey !== target.nextCueKey) return false;
   }
   return hasNeighbor;
+}
+
+/**
+ * A runtime may omit the active presentation UUID. In that case the payload
+ * itself is only useful as transition evidence when it is stable and differs
+ * from the arrangement observed before activating the playlist item.
+ */
+function arrangementFingerprint(slides: Slide[]): string {
+  return JSON.stringify(slides.map((slide) => [
+    slide.cueUuid,
+    slide.groupName,
+    slide.groupOccurrence,
+    slide.slideOffset,
+    cueContentKey(slide),
+    slide.previousCueKey,
+    slide.nextCueKey,
+  ]));
+}
+
+async function readActiveArrangementBaseline(client: ProPresenterClient): Promise<string> {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), ACTIVE_ARRANGEMENT_BASELINE_TIMEOUT_MS);
+  try {
+    const response = await client.activePresentation(controller.signal);
+    return arrangementFingerprint(flattenSlides(response, 'active-arrangement'));
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
 }
 
 /**
@@ -271,13 +299,24 @@ export function ProPresenterSessionProvider({ settings, children }: { settings: 
       if (!context.presentationId) throw commandFailure('프레젠테이션이 아닌 재생목록 항목은 cue를 실행할 수 없습니다.', `/v1/playlist/${encodeURIComponent(context.playlistId)}/${context.playlistItemIndex}/trigger`);
       const cachedState = queryClient.getQueryData<CanonicalState>(sessionKey(base));
       const alreadyActive = isActivePlaylistContext(latestState.current, context) || canonicalPlaylistContextMatches(cachedState, context);
+      let baselineFingerprint: string | null = null;
       if (!alreadyActive) {
+        // Capture the arrangement before the playlist transition. This is the
+        // only safe way to reject a UUID-less stale payload that happens to
+        // contain the same text as the requested cue.
+        try {
+          baselineFingerprint = await readActiveArrangementBaseline(client);
+        } catch {
+          // A missing baseline is deliberately conservative: an ID-less
+          // payload after activation will not be trusted without it.
+        }
         await client.triggerPlaylistItem(context.playlistId, context.playlistItemIndex);
         await waitForPlaylistContext(context);
       }
       const deadline = Date.now() + ACTIVE_ARRANGEMENT_TIMEOUT_MS;
       let cueIndex: number | null = null;
-      let unknownPresentationIdSince: number | null = null;
+      let unknownFingerprint: string | null = null;
+      let unknownStableReads = 0;
       while (Date.now() < deadline && cueIndex === null) {
         const remaining = Math.max(1, deadline - Date.now());
         const abortController = new AbortController();
@@ -290,14 +329,47 @@ export function ProPresenterSessionProvider({ settings, children }: { settings: 
             // The playlist item transition has been observed, but the active
             // presentation endpoint is still one state behind. Do not resolve
             // a cue against the old presentation.
-            unknownPresentationIdSince = null;
+            unknownFingerprint = null;
+            unknownStableReads = 0;
+          } else if (activeId === null && !alreadyActive) {
+            if (baselineFingerprint === null) {
+              // Without a pre-transition baseline there is no evidence that
+              // this ID-less payload is the newly activated item. Never turn
+              // a coincidental cue match into a live trigger.
+              unknownFingerprint = null;
+              unknownStableReads = 0;
+            } else {
+              const fingerprint = arrangementFingerprint(activeSlides);
+              if (fingerprint === baselineFingerprint) {
+                // This is still the pre-transition arrangement. Even a unique
+                // cue match is unsafe until the active payload changes.
+                unknownFingerprint = null;
+                unknownStableReads = 0;
+              } else {
+                if (unknownFingerprint === fingerprint) unknownStableReads += 1;
+                else {
+                  unknownFingerprint = fingerprint;
+                  unknownStableReads = 1;
+                }
+                // Require two consecutive post-transition payloads. A single
+                // changed response can still be an in-flight transition.
+                if (unknownStableReads >= 2) {
+                  const resolution = resolveActiveCueIndex(context, target, activeSlides);
+                  if (resolution.status === 'matched') cueIndex = resolution.cueIndex;
+                  else if (resolution.status === 'ambiguous') {
+                    throw commandFailure('활성 arrangement에서 선택한 cue를 하나로 식별할 수 없습니다.', '/v1/presentation/active/{index}/trigger');
+                  } else {
+                    throw commandFailure('선택한 cue를 현재 활성 arrangement에서 안전하게 식별할 수 없습니다.', '/v1/presentation/active/{index}/trigger');
+                  }
+                }
+              }
+            }
           } else {
-            if (activeId === null && unknownPresentationIdSince === null) unknownPresentationIdSince = Date.now();
             const resolution = resolveActiveCueIndex(context, target, activeSlides);
             if (resolution.status === 'matched') cueIndex = resolution.cueIndex;
             else if (resolution.status === 'ambiguous') {
               throw commandFailure('활성 arrangement에서 선택한 cue를 하나로 식별할 수 없습니다.', '/v1/presentation/active/{index}/trigger');
-            } else if (activeId === context.presentationId || (activeId === null && activeSlides.length && Date.now() - unknownPresentationIdSince! >= ACTIVE_ARRANGEMENT_UNKNOWN_ID_GRACE_MS)) {
+            } else if (activeId === context.presentationId || activeId === null) {
               throw commandFailure('선택한 cue를 현재 활성 arrangement에서 안전하게 식별할 수 없습니다.', '/v1/presentation/active/{index}/trigger');
             }
           }
